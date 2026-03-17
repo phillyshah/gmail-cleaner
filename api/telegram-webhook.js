@@ -393,39 +393,48 @@ async function processListing(email, accessToken) {
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
+  // Always respond to Telegram IMMEDIATELY — before any work
+  // This prevents Telegram retrying when cleanup takes a long time
+  res.json({ ok: true });
+
   const { message } = req.body || {};
-  if (!message?.text) return res.json({ ok: true });
-  if (String(message.chat.id) !== process.env.TELEGRAM_CHAT_ID) return res.json({ ok: true });
+  if (!message?.text) return;
+  if (String(message.chat.id) !== process.env.TELEGRAM_CHAT_ID) return;
 
   const cmd = message.text.trim().split(" ")[0].toLowerCase();
-
-  if (cmd !== "/clean") return res.json({ ok: true });
+  if (cmd !== "/clean") return;
 
   await tg("🧹 Starting cleanup...");
 
   const accounts = (await redis.get("gmail_accounts")) || [];
   if (!accounts.length) {
     await tg("❌ No Gmail accounts found. Open the app and connect your accounts first.");
-    return res.json({ ok: true });
+    return;
   }
 
   let totalTrashed = 0, totalNotified = 0, totalListingsTrashed = 0, totalTrauma = 0;
 
-  for (const account of accounts) {
-    const token = await getAccessToken(account.refreshToken);
+  const isListing = (e) => {
+    const addr = (e.sender.match(/<(.+?)>/) ? e.sender.match(/<(.+?)>/)[1] : e.sender).toLowerCase();
+    const sub = e.subject.toLowerCase();
+    return addr.includes("zillow") && (sub.includes("new listing") || sub.includes("price cut"));
+  };
+
+  // Scan all Gmail accounts in parallel
+  const accountResults = await Promise.all(
+    accounts.map(async (account) => {
+      const token = await getAccessToken(account.refreshToken);
+      if (!token) return { account, token: null, emails: [] };
+      const emails = await scanGmail(token);
+      return { account, token, emails };
+    })
+  );
+
+  for (const { account, token, emails } of accountResults) {
     if (!token) {
       await tg(`⚠️ Could not refresh token for ${account.email} — skipping.`);
       continue;
     }
-
-    await tg(`📬 Scanning ${account.email}...`);
-    const emails = await scanGmail(token);
-
-    const isListing = (e) => {
-      const addr = (e.sender.match(/<(.+?)>/) ? e.sender.match(/<(.+?)>/)[1] : e.sender).toLowerCase();
-      const sub = e.subject.toLowerCase();
-      return addr.includes("zillow") && (sub.includes("new listing") || sub.includes("price cut"));
-    };
 
     const listings = emails.filter(isListing);
     const regular = emails.filter((e) => !isListing(e));
@@ -475,5 +484,4 @@ export default async function handler(req, res) {
     `🗑 ${totalListingsTrashed} listings trashed\n` +
     `📊 ${totalTrauma} trauma dashboard${totalTrauma !== 1 ? "s" : ""} processed`;
   await tg(summary);
-  res.json({ ok: true });
 }
