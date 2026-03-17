@@ -5,7 +5,7 @@ const SCOPES = "https://www.googleapis.com/auth/gmail.modify";
 const PREFS_KEY = "inbox-zero-prefs";
 const AUTO_TRASH_THRESHOLD = 3;
 
-// -- Prefs (localStorage learning) --
+// -- Prefs --
 function loadPrefs() {
   try {
     return JSON.parse(localStorage.getItem(PREFS_KEY) || '{"safe":[],"trash":{}}');
@@ -23,28 +23,27 @@ function applyChoices(keptEmails, trashedEmails) {
   const prefs = loadPrefs();
   const safeSet = new Set(prefs.safe);
   const trashCounts = { ...prefs.trash };
-
   keptEmails.forEach((e) => {
     const addr = extractEmail(e.sender);
     safeSet.add(addr);
     delete trashCounts[addr];
   });
-
   trashedEmails.forEach((e) => {
     const addr = extractEmail(e.sender);
     safeSet.delete(addr);
     trashCounts[addr] = (trashCounts[addr] || 0) + 1;
   });
-
   localStorage.setItem(PREFS_KEY, JSON.stringify({ safe: [...safeSet], trash: trashCounts }));
 }
 
-// -- Google OAuth --
+// -- Google OAuth with auto-reconnect --
 function useGoogleAuth() {
   const [accessToken, setAccessToken] = useState(null);
+  const [autoConnecting, setAutoConnecting] = useState(!!localStorage.getItem("gmail_connected"));
   const clientRef = useRef(null);
 
   useEffect(() => {
+    const wasConnected = localStorage.getItem("gmail_connected");
     const interval = setInterval(() => {
       if (window.google?.accounts?.oauth2) {
         clearInterval(interval);
@@ -52,171 +51,199 @@ function useGoogleAuth() {
           client_id: GOOGLE_CLIENT_ID,
           scope: SCOPES,
           callback: (response) => {
-            if (response.access_token) setAccessToken(response.access_token);
+            setAutoConnecting(false);
+            if (response.access_token) {
+              localStorage.setItem("gmail_connected", "1");
+              setAccessToken(response.access_token);
+            }
           },
+          error_callback: () => setAutoConnecting(false),
         });
+        if (wasConnected) {
+          setAutoConnecting(true);
+          clientRef.current.requestAccessToken({ prompt: "" });
+        }
       }
     }, 100);
     return () => clearInterval(interval);
   }, []);
 
-  const signIn = () => clientRef.current?.requestAccessToken();
+  const signIn = () => clientRef.current?.requestAccessToken({ prompt: "select_account" });
   const signOut = () => {
     if (accessToken) window.google.accounts.oauth2.revoke(accessToken);
+    localStorage.removeItem("gmail_connected");
     setAccessToken(null);
   };
 
-  return { accessToken, signIn, signOut };
+  return { accessToken, signIn, signOut, autoConnecting };
 }
 
-// -- Global CSS --
+// -- Global CSS (Apple design language) --
 const globalCSS = `
-  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
   @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes slideUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
 
   *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+  body { margin: 0; }
+
   .iz-wrap {
     min-height: 100vh;
-    background: #0a0a0a;
-    color: #e8e4de;
-    font-family: 'JetBrains Mono', 'SF Mono', monospace;
+    background: #000;
+    color: #fff;
+    font-family: -apple-system, 'SF Pro Display', 'Inter', sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
 
   .iz-container {
-    max-width: 680px;
+    max-width: 430px;
     margin: 0 auto;
-    padding: 28px 16px 120px;
-    position: relative;
-    z-index: 1;
+    padding: 60px 20px 160px;
   }
   @media (min-width: 600px) {
-    .iz-container { padding: 48px 24px 140px; }
+    .iz-container { padding: 80px 24px 180px; }
   }
 
-  .iz-grain {
-    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-    opacity: 0.03; pointer-events: none; z-index: 0;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-  }
-
-  .iz-btn {
-    display: flex; align-items: center; justify-content: center; gap: 8px;
-    width: 100%; min-height: 52px;
-    background: #ff4d00; color: #0a0a0a;
-    border: none; padding: 14px 24px;
-    font-size: 11px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase;
-    cursor: pointer; font-family: 'JetBrains Mono', monospace;
-    transition: background 0.15s ease, color 0.15s ease;
-  }
-  .iz-btn:hover:not(:disabled) { background: #ff6a2a; }
-  .iz-btn:active:not(:disabled) { background: #e04400; }
-  .iz-btn:disabled { background: #222; color: #555; cursor: not-allowed; }
-  .iz-btn-google { background: #fff; color: #111; }
-  .iz-btn-google:hover { background: #f0f0f0 !important; }
-  .iz-btn-outline { background: transparent; color: #ff4d00; border: 1px solid #ff4d00; }
-  .iz-btn-outline:hover:not(:disabled) { background: #ff4d00 !important; color: #0a0a0a !important; }
-  .iz-btn-ghost { background: #1a1a1a; color: #666; }
-  .iz-btn-ghost:hover:not(:disabled) { color: #999 !important; background: #1a1a1a !important; }
-  .iz-btn-success { background: #0d1a00; color: #8aff42; border: 1px solid #1a2e00; }
-  .iz-btn-success:hover:not(:disabled) { background: #122200 !important; }
-
+  /* Cards */
   .iz-card {
-    background: #111; border: 1px solid #1e1e1e;
-    padding: 16px; margin-bottom: 12px;
-  }
-  @media (min-width: 600px) { .iz-card { padding: 20px 24px; } }
-
-  .iz-card-label {
-    font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
-    color: #ff4d00; display: block; margin-bottom: 12px;
+    background: #1c1c1e;
+    border-radius: 16px;
+    overflow: hidden;
+    margin-bottom: 12px;
   }
 
-  .iz-email-row {
-    display: flex; align-items: center;
-    padding: 10px 0; border-bottom: 1px solid #151515;
-    gap: 12px; min-height: 52px;
-    cursor: pointer; user-select: none;
+  .iz-card-row {
+    display: flex;
+    align-items: center;
+    padding: 14px 16px;
+    gap: 12px;
+    border-bottom: 1px solid rgba(84,84,88,0.3);
+    min-height: 52px;
+    cursor: pointer;
     transition: background 0.1s ease;
+    user-select: none;
   }
-  .iz-email-row:last-child { border-bottom: none; }
-  .iz-email-row:active { background: #141414; margin: 0 -16px; padding: 10px 16px; }
+  .iz-card-row:last-child { border-bottom: none; }
+  .iz-card-row:active { background: rgba(255,255,255,0.05); }
 
-  .iz-checkbox {
-    width: 22px; height: 22px; flex-shrink: 0;
-    border: 2px solid #333; border-radius: 3px;
+  /* Checkbox */
+  .iz-check {
+    width: 24px; height: 24px; flex-shrink: 0;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.2);
     display: flex; align-items: center; justify-content: center;
     transition: all 0.15s ease;
   }
-  .iz-checkbox.checked { background: #ff4d00; border-color: #ff4d00; }
-  .iz-checkbox.safe { border-color: #1a4000; }
+  .iz-check.on-trash { background: #ff453a; border-color: #ff453a; }
+  .iz-check.on-spam  { background: #ff9f0a; border-color: #ff9f0a; }
+  .iz-check.on-safe  { border-color: rgba(48,209,88,0.4); }
 
-  .iz-email-info { flex: 1; min-width: 0; }
-  .iz-email-sender {
-    font-size: 12px; color: #888;
+  /* Email info */
+  .iz-row-info { flex: 1; min-width: 0; }
+  .iz-row-sender {
+    font-size: 14px; font-weight: 500; color: #fff;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     margin-bottom: 2px;
   }
-  .iz-email-subject {
-    font-size: 11px; color: #555;
+  .iz-row-subject {
+    font-size: 12px; color: #8e8e93;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
 
+  /* Pill badges */
+  .iz-pill {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
+    padding: 3px 8px; border-radius: 20px; flex-shrink: 0;
+    text-transform: uppercase;
+  }
+  .iz-pill-promo  { background: rgba(255,159,10,0.15); color: #ff9f0a; }
+  .iz-pill-social { background: rgba(10,132,255,0.15); color: #0a84ff; }
+
+  /* Section header inside card */
+  .iz-section-hdr {
+    padding: 10px 16px 6px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.5px;
+    text-transform: uppercase; color: #8e8e93;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .iz-section-tap {
+    font-size: 11px; font-weight: 500; color: #0a84ff;
+    cursor: pointer; letter-spacing: 0;
+    text-transform: none;
+  }
+  .iz-section-tap:hover { opacity: 0.7; }
+
+  /* Stat row */
   .iz-stats {
     display: grid; grid-template-columns: repeat(3, 1fr);
-    gap: 8px; margin-bottom: 16px;
+    gap: 10px; margin-bottom: 16px;
   }
   .iz-stat-box {
-    background: #111; border: 1px solid #1e1e1e;
-    padding: 12px;
+    background: #1c1c1e; border-radius: 14px;
+    padding: 14px 12px;
   }
-  .iz-stat-label {
-    font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
-    color: #555; margin-bottom: 4px; display: block;
+  .iz-stat-lbl {
+    font-size: 11px; font-weight: 500; color: #8e8e93;
+    margin-bottom: 4px; letter-spacing: 0.2px;
   }
-  .iz-stat-value {
-    font-size: 24px; font-weight: 700; font-family: 'Space Grotesk', sans-serif;
+  .iz-stat-val {
+    font-size: 26px; font-weight: 700; letter-spacing: -0.5px;
   }
 
-  .iz-select-all {
-    font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
-    color: #444; cursor: pointer; padding: 4px 0;
-    transition: color 0.15s;
+  /* Buttons */
+  .iz-btn {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    width: 100%; border: none; cursor: pointer;
+    font-family: -apple-system, 'SF Pro Display', 'Inter', sans-serif;
+    font-size: 16px; font-weight: 600; letter-spacing: -0.2px;
+    border-radius: 14px; padding: 16px 24px;
+    transition: opacity 0.15s ease, transform 0.1s ease;
+    -webkit-font-smoothing: antialiased;
   }
-  .iz-select-all:hover { color: #888; }
+  .iz-btn:hover:not(:disabled) { opacity: 0.88; }
+  .iz-btn:active:not(:disabled) { transform: scale(0.98); opacity: 0.75; }
+  .iz-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
+  .iz-btn-primary { background: #0a84ff; color: #fff; }
+  .iz-btn-red     { background: #ff453a; color: #fff; }
+  .iz-btn-orange  { background: #ff9f0a; color: #fff; }
+  .iz-btn-green   { background: #30d158; color: #fff; }
+  .iz-btn-secondary { background: #2c2c2e; color: #fff; }
+  .iz-btn-google  { background: #fff; color: #000; }
+  .iz-btn-google:hover:not(:disabled) { background: #f5f5f7 !important; }
+
+  /* Log */
+  .iz-log-entry { font-size: 12px; color: #8e8e93; line-height: 1.9; }
+  .iz-log-entry.active { color: #0a84ff; }
+
+  /* Sticky bar */
   .iz-sticky {
     position: fixed; bottom: 0; left: 0; right: 0;
-    background: #0a0a0a; border-top: 1px solid #1e1e1e;
-    padding: 14px 16px;
     z-index: 100;
+    background: rgba(0,0,0,0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-top: 1px solid rgba(84,84,88,0.3);
+    padding: 12px 20px max(env(safe-area-inset-bottom), 16px);
   }
   .iz-sticky-inner {
-    max-width: 680px; margin: 0 auto;
-    display: flex; gap: 10px;
+    max-width: 430px; margin: 0 auto;
+    display: flex; flex-direction: column; gap: 8px;
   }
 
-  .iz-log-line { color: #444; transition: color 0.3s ease; line-height: 1.8; }
-  .iz-log-line.active { color: #ff4d00; }
-
-  .iz-badge {
-    font-size: 9px; padding: 2px 6px; letter-spacing: 1px;
-    text-transform: uppercase; flex-shrink: 0;
-  }
-  .iz-badge-promo { background: #1a0f00; color: #ff8c42; border: 1px solid #2a1800; }
-  .iz-badge-social { background: #0f0f1a; color: #6b8afd; border: 1px solid #1a1a2e; }
-
-  .iz-section-row {
-    display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: 8px;
+  /* Status dot */
+  .iz-dot {
+    width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+    display: inline-block;
   }
 `;
 
-// -- Components --
+// -- Subcomponents --
 function GoogleIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
       <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
       <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
       <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/>
@@ -225,37 +252,41 @@ function GoogleIcon() {
   );
 }
 
-function Spinner() {
+function Spinner({ color = "#fff" }) {
   return (
     <span style={{
-      display: "inline-block", width: 14, height: 14,
-      border: "2px solid #444", borderTopColor: "#ff4d00",
+      display: "inline-block", width: 18, height: 18,
+      border: `2px solid rgba(255,255,255,0.2)`, borderTopColor: color,
       borderRadius: "50%", animation: "spin 0.8s linear infinite",
     }} />
   );
 }
 
+function CheckIcon({ color = "#fff" }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+      <path d="M2 6L5 9L10 3" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
 function EmailRow({ email, checked, onToggle, trashCount, isSafe }) {
   const isFrequent = trashCount >= AUTO_TRASH_THRESHOLD;
-  const displayName = email.sender.replace(/<[^>]+>/, "").trim() || email.sender;
+  const name = email.sender.replace(/<[^>]+>/, "").replace(/"/g, "").trim() || extractEmail(email.sender);
 
   return (
-    <div className="iz-email-row" onClick={onToggle} role="checkbox" aria-checked={checked}>
-      <div className={`iz-checkbox${checked ? " checked" : ""}${isSafe ? " safe" : ""}`}>
-        {checked && (
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-            <path d="M2 6L5 9L10 3" stroke="#0a0a0a" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        )}
+    <div className="iz-card-row" onClick={onToggle} role="checkbox" aria-checked={checked}>
+      <div className={`iz-check${checked ? (isSafe ? " on-safe" : " on-trash") : (isSafe ? " on-safe" : "")}`}>
+        {checked && <CheckIcon color={isSafe ? "#30d158" : "#fff"} />}
       </div>
-      <div className="iz-email-info">
-        <div className="iz-email-sender">{displayName}</div>
-        <div className="iz-email-subject">{email.subject}</div>
+      <div className="iz-row-info">
+        <div className="iz-row-sender">{name}</div>
+        <div className="iz-row-subject">{email.subject}</div>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3, flexShrink: 0 }}>
-        <span className={`iz-badge iz-badge-${email.category}`}>{email.category}</span>
-        {isFrequent && <span style={{ fontSize: 9, color: "#ff6a2a", letterSpacing: 1 }}>×{trashCount}</span>}
-        {isSafe && <span style={{ fontSize: 9, color: "#3a8000", letterSpacing: 1 }}>safe</span>}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
+        <span className={`iz-pill iz-pill-${email.category}`}>{email.category}</span>
+        {isFrequent && <span style={{ fontSize: 10, color: "#ff9f0a" }}>×{trashCount}</span>}
+        {isSafe && !checked && <span style={{ fontSize: 10, color: "#30d158" }}>safe</span>}
       </div>
     </div>
   );
@@ -263,8 +294,8 @@ function EmailRow({ email, checked, onToggle, trashCount, isSafe }) {
 
 // -- Main --
 export default function GmailCleaner() {
-  const { accessToken, signIn, signOut } = useGoogleAuth();
-  const [phase, setPhase] = useState("idle"); // idle | scanning | review | cleaning | done
+  const { accessToken, signIn, signOut, autoConnecting } = useGoogleAuth();
+  const [phase, setPhase] = useState("idle");
   const [emails, setEmails] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [cleanResult, setCleanResult] = useState(null);
@@ -272,14 +303,13 @@ export default function GmailCleaner() {
   const logRef = useRef(null);
 
   const addLog = useCallback((msg) => {
-    setLogs((prev) => [...prev, { text: msg, time: new Date().toLocaleTimeString() }]);
+    setLogs((p) => [...p, { text: msg, time: new Date().toLocaleTimeString() }]);
   }, []);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [logs]);
 
-  // Group emails using saved prefs
   const { reviewEmails, safeEmails, trashCountMap } = useMemo(() => {
     const prefs = loadPrefs();
     const safeSet = new Set(prefs.safe);
@@ -294,9 +324,7 @@ export default function GmailCleaner() {
       else review.push(e);
     });
 
-    // Sort: frequent-trash first, then unknown
     review.sort((a, b) => (countMap[b.id] || 0) - (countMap[a.id] || 0));
-
     return { reviewEmails: review, safeEmails: safe, trashCountMap: countMap };
   }, [emails]);
 
@@ -313,26 +341,19 @@ export default function GmailCleaner() {
         body: JSON.stringify({ accessToken }),
       });
       const result = await res.json();
-      if (result.error) {
-        addLog(`Error: ${result.error}`);
-        setPhase("idle");
-        return;
-      }
+      if (result.error) { addLog(`Error: ${result.error}`); setPhase("idle"); return; }
 
       const all = [
         ...(result.promotions || []).map((e) => ({ ...e, category: "promo" })),
         ...(result.social || []).map((e) => ({ ...e, category: "social" })),
       ];
 
-      const prefs = loadPrefs();
-      const safeSet = new Set(prefs.safe);
-      const initSelected = new Set(
-        all.filter((e) => !safeSet.has(extractEmail(e.sender))).map((e) => e.id)
-      );
+      const safeSet = new Set(loadPrefs().safe);
+      const initSelected = new Set(all.filter((e) => !safeSet.has(extractEmail(e.sender))).map((e) => e.id));
 
       setEmails(all);
       setSelected(initSelected);
-      addLog(`Found ${result.promotions.length} promos, ${result.social.length} social. Tap to review.`);
+      addLog(`Found ${result.promotions.length} promos, ${result.social.length} social.`);
       setPhase("review");
     } catch (err) {
       addLog(`Error: ${err.message}`);
@@ -348,14 +369,11 @@ export default function GmailCleaner() {
     });
   };
 
-  const toggleAll = (emailList, forceState) => {
+  const toggleAll = (list) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      const allOn = emailList.every((e) => prev.has(e.id));
-      emailList.forEach((e) => {
-        if (forceState !== undefined ? forceState : allOn) next.delete(e.id);
-        else next.add(e.id);
-      });
+      const allOn = list.every((e) => prev.has(e.id));
+      list.forEach((e) => (allOn ? next.delete(e.id) : next.add(e.id)));
       return next;
     });
   };
@@ -363,15 +381,13 @@ export default function GmailCleaner() {
   const handleClean = async () => {
     const toTrash = emails.filter((e) => selected.has(e.id));
     const toKeep = emails.filter((e) => !selected.has(e.id));
-
     if (toTrash.length === 0) {
       applyChoices(toKeep, []);
-      setCleanResult({ deleted: 0 });
+      setCleanResult({ count: 0, kept: toKeep.length, action: "trash" });
       addLog("Nothing to trash — choices saved.");
       setPhase("done");
       return;
     }
-
     setPhase("cleaning");
     addLog(`Trashing ${toTrash.length} messages...`);
     try {
@@ -382,8 +398,31 @@ export default function GmailCleaner() {
       });
       const result = await res.json();
       applyChoices(toKeep, toTrash);
-      setCleanResult({ ...result, kept: toKeep.length });
+      setCleanResult({ count: result.deleted, kept: toKeep.length, action: "trash" });
       addLog(`Done. ${result.deleted} trashed, ${toKeep.length} kept.`);
+      setPhase("done");
+    } catch (err) {
+      addLog(`Error: ${err.message}`);
+      setPhase("review");
+    }
+  };
+
+  const handleSpam = async () => {
+    const toSpam = emails.filter((e) => selected.has(e.id));
+    const toKeep = emails.filter((e) => !selected.has(e.id));
+    if (toSpam.length === 0) return;
+    setPhase("cleaning");
+    addLog(`Marking ${toSpam.length} as spam...`);
+    try {
+      const res = await fetch("/api/spam", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken, ids: toSpam.map((e) => e.id) }),
+      });
+      const result = await res.json();
+      applyChoices(toKeep, toSpam);
+      setCleanResult({ count: result.marked, kept: toKeep.length, action: "spam" });
+      addLog(`Done. ${result.marked} marked as spam.`);
       setPhase("done");
     } catch (err) {
       addLog(`Error: ${err.message}`);
@@ -399,84 +438,95 @@ export default function GmailCleaner() {
     setLogs([]);
   };
 
-  const totalCount = emails.length;
-  const selectedCount = selected.size;
-  const keptCount = totalCount - selectedCount;
+  const total = emails.length;
+  const selCount = selected.size;
+  const keptCount = total - selCount;
 
   return (
     <div className="iz-wrap">
       <style>{globalCSS}</style>
-      <div className="iz-grain" aria-hidden="true" />
 
       <div className="iz-container">
+
         {/* Header */}
-        <div style={{ marginBottom: 28, borderBottom: "1px solid #1e1e1e", paddingBottom: 24 }}>
-          <div style={{ fontSize: 10, letterSpacing: 4, textTransform: "uppercase", color: "#555", marginBottom: 8 }}>
-            Gmail Maintenance
+        <div style={{ marginBottom: 36 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: "#8e8e93", marginBottom: 6, letterSpacing: 0.2 }}>
+            Gmail
           </div>
-          <h1 style={{ fontSize: 28, fontWeight: 700, color: "#ff4d00", letterSpacing: -1, fontFamily: "'Space Grotesk', sans-serif", margin: "0 0 8px" }}>
-            INBOX ZERO
+          <h1 style={{ fontSize: 34, fontWeight: 700, letterSpacing: -1, margin: "0 0 8px", lineHeight: 1.1 }}>
+            Inbox Zero
           </h1>
-          <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5 }}>
-            Scan → review → trash. Learns your preferences over time.
-          </div>
+          <p style={{ fontSize: 15, color: "#8e8e93", margin: 0, lineHeight: 1.5 }}>
+            Scan, review, and clean up promotions & social emails.
+          </p>
         </div>
 
-        {/* Auth status */}
+        {/* Auth status bar */}
         {accessToken && (
-          <div style={{ fontSize: 11, color: "#555", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#8aff42", flexShrink: 0, display: "inline-block" }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20, fontSize: 13, color: "#8e8e93" }}>
+            <span className="iz-dot" style={{ background: "#30d158" }} />
             Gmail connected
-            <button onClick={signOut} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "#333", fontSize: 11, fontFamily: "inherit", padding: 0 }}>
-              disconnect
+            <button
+              onClick={signOut}
+              style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "#0a84ff", fontSize: 13, fontWeight: 500, fontFamily: "inherit", padding: 0 }}
+            >
+              Sign out
             </button>
           </div>
         )}
 
-        {/* Connect */}
-        {!accessToken && (
+        {/* Connect / scanning / scan */}
+        {!accessToken && !autoConnecting && (
           <button className="iz-btn iz-btn-google" onClick={signIn}>
-            <GoogleIcon /> Connect Gmail
+            <GoogleIcon /> Sign in with Google
           </button>
         )}
 
-        {/* Scan */}
+        {autoConnecting && (
+          <button className="iz-btn iz-btn-primary" disabled>
+            <Spinner /> Connecting...
+          </button>
+        )}
+
         {accessToken && phase === "idle" && (
-          <button className="iz-btn" onClick={handleScan}>Scan Inbox</button>
+          <button className="iz-btn iz-btn-primary" onClick={handleScan}>
+            Scan Inbox
+          </button>
         )}
 
         {(phase === "scanning" || phase === "cleaning") && (
-          <button className="iz-btn" disabled>
-            <Spinner /> {phase === "scanning" ? "Scanning..." : "Cleaning..."}
+          <button className="iz-btn iz-btn-primary" disabled>
+            <Spinner /> {phase === "scanning" ? "Scanning…" : "Working…"}
           </button>
         )}
 
         {/* Review */}
         {phase === "review" && (
-          <div style={{ animation: "fadeIn 0.35s ease" }}>
+          <div style={{ animation: "slideUp 0.3s ease" }}>
+
             {/* Stats */}
             <div className="iz-stats">
               <div className="iz-stat-box">
-                <span className="iz-stat-label">Found</span>
-                <div className="iz-stat-value">{totalCount}</div>
+                <div className="iz-stat-lbl">Found</div>
+                <div className="iz-stat-val">{total}</div>
               </div>
               <div className="iz-stat-box">
-                <span className="iz-stat-label">Trash</span>
-                <div className="iz-stat-value" style={{ color: "#ff4d00" }}>{selectedCount}</div>
+                <div className="iz-stat-lbl">Selected</div>
+                <div className="iz-stat-val" style={{ color: "#ff453a" }}>{selCount}</div>
               </div>
               <div className="iz-stat-box">
-                <span className="iz-stat-label">Keep</span>
-                <div className="iz-stat-value" style={{ color: "#8aff42" }}>{keptCount}</div>
+                <div className="iz-stat-lbl">Keeping</div>
+                <div className="iz-stat-val" style={{ color: "#30d158" }}>{keptCount}</div>
               </div>
             </div>
 
-            {/* Review list */}
+            {/* Review emails */}
             {reviewEmails.length > 0 && (
               <div className="iz-card">
-                <div className="iz-section-row">
-                  <span className="iz-card-label" style={{ marginBottom: 0 }}>Review ({reviewEmails.length})</span>
-                  <span className="iz-select-all" onClick={() => toggleAll(reviewEmails)}>
-                    {reviewEmails.every((e) => selected.has(e.id)) ? "Uncheck all" : "Check all"}
+                <div className="iz-section-hdr">
+                  Review — {reviewEmails.length}
+                  <span className="iz-section-tap" onClick={() => toggleAll(reviewEmails)}>
+                    {reviewEmails.every((e) => selected.has(e.id)) ? "Deselect all" : "Select all"}
                   </span>
                 </div>
                 {reviewEmails.map((e) => (
@@ -491,15 +541,13 @@ export default function GmailCleaner() {
               </div>
             )}
 
-            {/* Safe / remembered */}
+            {/* Safe senders */}
             {safeEmails.length > 0 && (
               <div className="iz-card">
-                <div className="iz-section-row">
-                  <span className="iz-card-label" style={{ marginBottom: 0, color: "#3a8000" }}>
-                    Remembered safe ({safeEmails.length})
-                  </span>
-                  <span className="iz-select-all" onClick={() => toggleAll(safeEmails)}>
-                    {safeEmails.every((e) => selected.has(e.id)) ? "Uncheck all" : "Check all"}
+                <div className="iz-section-hdr" style={{ color: "#30d158" }}>
+                  Remembered Safe — {safeEmails.length}
+                  <span className="iz-section-tap" onClick={() => toggleAll(safeEmails)}>
+                    {safeEmails.every((e) => selected.has(e.id)) ? "Deselect all" : "Select all"}
                   </span>
                 </div>
                 {safeEmails.map((e) => (
@@ -515,9 +563,11 @@ export default function GmailCleaner() {
               </div>
             )}
 
-            {totalCount === 0 && (
-              <div style={{ background: "#0d1a00", border: "1px solid #1a2e00", padding: "20px 24px", color: "#8aff42", fontSize: 13 }}>
-                ✓ Inbox is already clean!
+            {total === 0 && (
+              <div className="iz-card" style={{ padding: "24px 20px", textAlign: "center" }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>✓</div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: "#30d158" }}>Inbox is clean</div>
+                <div style={{ fontSize: 13, color: "#8e8e93", marginTop: 4 }}>Nothing to clean up.</div>
               </div>
             )}
           </div>
@@ -525,11 +575,18 @@ export default function GmailCleaner() {
 
         {/* Done */}
         {phase === "done" && cleanResult && (
-          <div style={{ background: "#0d1a00", border: "1px solid #1a2e00", padding: "20px 24px", color: "#8aff42", fontSize: 13, lineHeight: 1.6, animation: "fadeIn 0.35s ease" }}>
-            ✓ Trashed {cleanResult.deleted} messages.
+          <div className="iz-card" style={{ padding: "24px 20px", animation: "slideUp 0.3s ease", textAlign: "center" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>
+              {cleanResult.action === "spam" ? "🚫" : "🗑️"}
+            </div>
+            <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 6 }}>
+              {cleanResult.action === "spam"
+                ? `${cleanResult.count} marked as spam`
+                : `${cleanResult.count} moved to trash`}
+            </div>
             {cleanResult.kept > 0 && (
-              <div style={{ fontSize: 11, color: "#555", marginTop: 4 }}>
-                Remembered {cleanResult.kept} safe sender{cleanResult.kept !== 1 ? "s" : ""} for next time.
+              <div style={{ fontSize: 13, color: "#8e8e93" }}>
+                Remembered {cleanResult.kept} safe sender{cleanResult.kept !== 1 ? "s" : ""}.
               </div>
             )}
           </div>
@@ -537,20 +594,17 @@ export default function GmailCleaner() {
 
         {/* Activity log */}
         {logs.length > 0 && (
-          <div className="iz-card" style={{ marginTop: 24 }} ref={logRef}>
-            <span className="iz-card-label">Activity Log</span>
-            <div style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
-              {logs.map((l, i) => (
-                <div key={i} className={`iz-log-line${i === logs.length - 1 ? " active" : ""}`}>
-                  <span style={{ color: "#333" }}>{l.time}</span> → {l.text}
-                </div>
-              ))}
-            </div>
+          <div className="iz-card" style={{ padding: "14px 16px", marginTop: 4 }} ref={logRef}>
+            {logs.map((l, i) => (
+              <div key={i} className={`iz-log-entry${i === logs.length - 1 ? " active" : ""}`}>
+                <span style={{ color: "#3a3a3c" }}>{l.time}</span> {l.text}
+              </div>
+            ))}
           </div>
         )}
 
-        <div style={{ marginTop: 48, fontSize: 10, color: "#2a2a2a", letterSpacing: 2, textTransform: "uppercase" }}>
-          Gmail Cleanup · v3.0
+        <div style={{ marginTop: 40, fontSize: 12, color: "#3a3a3c", textAlign: "center" }}>
+          v1.01
         </div>
       </div>
 
@@ -558,12 +612,26 @@ export default function GmailCleaner() {
       {phase === "review" && (
         <div className="iz-sticky">
           <div className="iz-sticky-inner">
-            <button className="iz-btn iz-btn-outline" onClick={reset} style={{ flex: "0 0 72px", minHeight: 50 }}>
-              Cancel
-            </button>
-            <button className="iz-btn" onClick={handleClean} style={{ flex: 1, minHeight: 50 }}>
-              {selectedCount > 0 ? `Trash ${selectedCount}` : "Done (keep all)"}
-            </button>
+            {selCount > 0 && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="iz-btn iz-btn-orange" onClick={handleSpam} style={{ flex: 1, fontSize: 15 }}>
+                  Spam {selCount}
+                </button>
+                <button className="iz-btn iz-btn-red" onClick={handleClean} style={{ flex: 1, fontSize: 15 }}>
+                  Trash {selCount}
+                </button>
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8 }}>
+              {selCount === 0 && (
+                <button className="iz-btn iz-btn-green" onClick={handleClean} style={{ flex: 1, fontSize: 15 }}>
+                  Keep All
+                </button>
+              )}
+              <button className="iz-btn iz-btn-secondary" onClick={reset} style={{ flex: selCount === 0 ? "0 0 90px" : 1, fontSize: 15 }}>
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -571,8 +639,8 @@ export default function GmailCleaner() {
       {phase === "done" && (
         <div className="iz-sticky">
           <div className="iz-sticky-inner">
-            <button className="iz-btn iz-btn-success" onClick={reset} style={{ flex: 1 }}>
-              Run Again
+            <button className="iz-btn iz-btn-primary" onClick={reset}>
+              Scan Again
             </button>
           </div>
         </div>
