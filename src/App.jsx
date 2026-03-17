@@ -171,120 +171,121 @@ const globalCSS = `
 
   .iz-wrap {
     min-height: 100vh;
-    background: #000;
-    color: #fff;
+    background: #1a1a2e;
+    color: #f0eeee;
     font-family: -apple-system, 'SF Pro Display', 'Inter', sans-serif;
     -webkit-font-smoothing: antialiased;
   }
   .iz-container {
-    max-width: 430px;
+    max-width: 480px;
     margin: 0 auto;
-    padding: 60px 20px 160px;
+    padding: 60px 20px 180px;
   }
   @media (min-width: 600px) {
-    .iz-container { padding: 80px 24px 180px; }
+    .iz-container { padding: 80px 28px 200px; }
   }
 
-  .iz-card { background: #1c1c1e; border-radius: 16px; overflow: hidden; margin-bottom: 12px; }
+  .iz-card { background: #252540; border-radius: 18px; overflow: hidden; margin-bottom: 14px; border: 1px solid rgba(255,255,255,0.08); }
 
   .iz-card-row {
     display: flex; align-items: center;
-    padding: 14px 16px; gap: 12px;
-    border-bottom: 1px solid rgba(84,84,88,0.3);
-    min-height: 52px; cursor: pointer;
+    padding: 16px 18px; gap: 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+    min-height: 60px; cursor: pointer;
     transition: background 0.1s ease; user-select: none;
   }
   .iz-card-row:last-child { border-bottom: none; }
-  .iz-card-row:active { background: rgba(255,255,255,0.05); }
+  .iz-card-row:active { background: rgba(255,255,255,0.06); }
 
   .iz-check {
-    width: 24px; height: 24px; flex-shrink: 0;
-    border-radius: 50%; border: 2px solid rgba(255,255,255,0.2);
+    width: 28px; height: 28px; flex-shrink: 0;
+    border-radius: 50%; border: 2px solid rgba(255,255,255,0.3);
     display: flex; align-items: center; justify-content: center;
     transition: all 0.15s ease;
   }
   .iz-check.on-trash { background: #ff453a; border-color: #ff453a; }
-  .iz-check.on-safe  { border-color: rgba(48,209,88,0.4); }
+  .iz-check.on-safe  { border-color: rgba(52,211,100,0.6); }
 
   .iz-row-info { flex: 1; min-width: 0; }
-  .iz-row-sender { font-size: 14px; font-weight: 500; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
-  .iz-row-subject { font-size: 12px; color: #8e8e93; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .iz-row-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex-shrink: 0; }
+  .iz-row-sender { font-size: 16px; font-weight: 600; color: #f0eeee; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
+  .iz-row-subject { font-size: 14px; color: #b0aec0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.4; }
+  .iz-row-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
 
-  .iz-pill { font-size: 10px; font-weight: 600; letter-spacing: 0.3px; padding: 3px 8px; border-radius: 20px; text-transform: uppercase; }
-  .iz-pill-promo    { background: rgba(255,159,10,0.15); color: #ff9f0a; }
-  .iz-pill-social   { background: rgba(10,132,255,0.15); color: #0a84ff; }
-  .iz-pill-listing  { background: rgba(48,209,88,0.15); color: #30d158; }
-  .iz-pill-account { font-size: 9px; font-weight: 500; padding: 2px 6px; border-radius: 20px; background: rgba(255,255,255,0.07); color: #636366; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .iz-pill { font-size: 11px; font-weight: 700; letter-spacing: 0.3px; padding: 4px 10px; border-radius: 20px; text-transform: uppercase; }
+  .iz-pill-promo    { background: rgba(255,159,10,0.2);  color: #ffb340; }
+  .iz-pill-social   { background: rgba(10,132,255,0.2);  color: #409cff; }
+  .iz-pill-listing  { background: rgba(52,211,100,0.2);  color: #34d364; }
+  .iz-pill-inbox    { background: rgba(255,255,255,0.1); color: #c0bdd0; }
+  .iz-pill-account  { font-size: 10px; font-weight: 500; padding: 3px 8px; border-radius: 20px; background: rgba(255,255,255,0.08); color: #a0a0b8; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .iz-section-hdr {
-    padding: 10px 16px 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.5px;
-    text-transform: uppercase; color: #8e8e93;
+    padding: 12px 18px 8px; font-size: 13px; font-weight: 700; letter-spacing: 0.4px;
+    text-transform: uppercase; color: #a0a0b8;
     display: flex; justify-content: space-between; align-items: center;
   }
-  .iz-section-tap { font-size: 11px; font-weight: 500; color: #0a84ff; cursor: pointer; letter-spacing: 0; text-transform: none; }
+  .iz-section-tap { font-size: 14px; font-weight: 600; color: #409cff; cursor: pointer; letter-spacing: 0; text-transform: none; }
   .iz-section-tap:hover { opacity: 0.7; }
 
-  .iz-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
-  .iz-stat-box { background: #1c1c1e; border-radius: 14px; padding: 14px 12px; }
-  .iz-stat-lbl { font-size: 11px; font-weight: 500; color: #8e8e93; margin-bottom: 4px; }
-  .iz-stat-val { font-size: 26px; font-weight: 700; letter-spacing: -0.5px; }
+  .iz-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
+  .iz-stat-box { background: #252540; border-radius: 16px; padding: 18px 14px; border: 1px solid rgba(255,255,255,0.07); }
+  .iz-stat-lbl { font-size: 13px; font-weight: 500; color: #a0a0b8; margin-bottom: 6px; }
+  .iz-stat-val { font-size: 30px; font-weight: 700; letter-spacing: -0.5px; color: #f0eeee; }
 
   .iz-btn {
     display: flex; align-items: center; justify-content: center; gap: 8px;
     width: 100%; border: none; cursor: pointer;
     font-family: -apple-system, 'SF Pro Display', 'Inter', sans-serif;
-    font-size: 16px; font-weight: 600; letter-spacing: -0.2px;
-    border-radius: 14px; padding: 16px 24px;
+    font-size: 17px; font-weight: 700; letter-spacing: -0.2px;
+    border-radius: 16px; padding: 18px 24px;
     transition: opacity 0.15s ease, transform 0.1s ease;
     -webkit-font-smoothing: antialiased;
   }
   .iz-btn:hover:not(:disabled) { opacity: 0.88; }
   .iz-btn:active:not(:disabled) { transform: scale(0.98); opacity: 0.75; }
   .iz-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-  .iz-btn-primary   { background: #0a84ff; color: #fff; }
+  .iz-btn-primary   { background: #409cff; color: #fff; }
   .iz-btn-red       { background: #ff453a; color: #fff; }
   .iz-btn-orange    { background: #ff9f0a; color: #fff; }
-  .iz-btn-green     { background: #30d158; color: #fff; }
-  .iz-btn-secondary { background: #2c2c2e; color: #fff; }
-  .iz-btn-google    { background: #fff; color: #000; }
-  .iz-btn-google:hover:not(:disabled) { background: #f5f5f7 !important; }
+  .iz-btn-green     { background: #34d364; color: #fff; }
+  .iz-btn-secondary { background: #35354f; color: #f0eeee; }
+  .iz-btn-google    { background: #fff; color: #1a1a2e; }
+  .iz-btn-google:hover:not(:disabled) { background: #f0eeff !important; }
 
-  /* Account selector */
+  /* Account selector — always visible on idle */
   .iz-account-selector {
-    display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;
+    display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;
   }
   .iz-account-chip {
-    display: flex; align-items: center; gap: 6px;
-    padding: 8px 14px; border-radius: 20px; cursor: pointer;
-    font-size: 13px; font-weight: 500; font-family: inherit;
-    border: 1.5px solid rgba(84,84,88,0.4);
-    background: transparent; color: #8e8e93;
+    display: flex; align-items: center; gap: 7px;
+    padding: 10px 16px; border-radius: 22px; cursor: pointer;
+    font-size: 15px; font-weight: 600; font-family: inherit;
+    border: 2px solid rgba(255,255,255,0.18);
+    background: #252540; color: #b0aec0;
     transition: all 0.15s ease; user-select: none;
   }
-  .iz-account-chip.active { background: #0a84ff; border-color: #0a84ff; color: #fff; }
+  .iz-account-chip.active { background: #409cff; border-color: #409cff; color: #fff; }
   .iz-account-chip:active { transform: scale(0.97); }
-  .iz-account-chip-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+  .iz-account-chip-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 
   /* Account management */
-  .iz-account-row { display: flex; align-items: center; padding: 12px 16px; gap: 12px; border-bottom: 1px solid rgba(84,84,88,0.3); }
+  .iz-account-row { display: flex; align-items: center; padding: 14px 18px; gap: 14px; border-bottom: 1px solid rgba(255,255,255,0.07); }
   .iz-account-row:last-child { border-bottom: none; }
-  .iz-account-avatar { width: 32px; height: 32px; border-radius: 50%; background: #2c2c2e; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; color: #0a84ff; flex-shrink: 0; }
-  .iz-account-email { flex: 1; font-size: 14px; color: #fff; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .iz-account-remove { background: none; border: none; cursor: pointer; color: #ff453a; font-size: 13px; font-weight: 500; font-family: inherit; padding: 4px 8px; border-radius: 8px; }
-  .iz-account-remove:hover { background: rgba(255,69,58,0.1); }
+  .iz-account-avatar { width: 36px; height: 36px; border-radius: 50%; background: #35354f; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; color: #409cff; flex-shrink: 0; }
+  .iz-account-email { flex: 1; font-size: 15px; font-weight: 500; color: #f0eeee; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .iz-account-remove { background: none; border: none; cursor: pointer; color: #ff6b6b; font-size: 14px; font-weight: 600; font-family: inherit; padding: 6px 10px; border-radius: 8px; }
+  .iz-account-remove:hover { background: rgba(255,69,58,0.15); }
 
-  .iz-log-entry { font-size: 12px; color: #8e8e93; line-height: 1.9; }
-  .iz-log-entry.active { color: #0a84ff; }
+  .iz-log-entry { font-size: 14px; color: #a0a0b8; line-height: 2; }
+  .iz-log-entry.active { color: #409cff; font-weight: 500; }
 
   .iz-sticky {
     position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
-    background: rgba(0,0,0,0.85);
-    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-    border-top: 1px solid rgba(84,84,88,0.3);
-    padding: 12px 20px max(env(safe-area-inset-bottom), 16px);
+    background: rgba(26,26,46,0.92);
+    backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+    border-top: 1px solid rgba(255,255,255,0.1);
+    padding: 14px 20px max(env(safe-area-inset-bottom), 18px);
   }
-  .iz-sticky-inner { max-width: 430px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
+  .iz-sticky-inner { max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; }
 `;
 
 function GoogleIcon() {
@@ -634,12 +635,12 @@ export default function GmailCleaner() {
       <div className="iz-container">
 
         {/* Header */}
-        <div style={{ marginBottom: 32 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, color: "#8e8e93", marginBottom: 6 }}>Gmail</div>
-          <h1 style={{ fontSize: 34, fontWeight: 700, letterSpacing: -1, margin: "0 0 8px", lineHeight: 1.1 }}>
+        <div style={{ marginBottom: 36 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "#a0a0b8", marginBottom: 8, letterSpacing: 0.3 }}>Gmail</div>
+          <h1 style={{ fontSize: 36, fontWeight: 700, letterSpacing: -1, margin: "0 0 10px", lineHeight: 1.1, color: "#f0eeee" }}>
             Inbox Zero
           </h1>
-          <p style={{ fontSize: 15, color: "#8e8e93", margin: 0, lineHeight: 1.5 }}>
+          <p style={{ fontSize: 16, color: "#b0aec0", margin: 0, lineHeight: 1.6 }}>
             Scan, review, and clean up promotions &amp; social emails.
           </p>
         </div>
@@ -648,7 +649,7 @@ export default function GmailCleaner() {
         {(hasAccounts || initializing) && phase === "idle" && (
           <div className="iz-card" style={{ marginBottom: 20 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px 10px" }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>Accounts</span>
+              <span style={{ fontSize: 15, fontWeight: 700, color: "#f0eeee" }}>Accounts</span>
               <button
                 onClick={addAccount}
                 style={{ background: "none", border: "none", cursor: "pointer", color: "#0a84ff", fontSize: 13, fontWeight: 600, fontFamily: "inherit", padding: 0 }}
@@ -672,7 +673,7 @@ export default function GmailCleaner() {
         )}
 
         {/* Account selector chips (only when multiple accounts) */}
-        {phase === "idle" && !initializing && (accounts.length > 1 || true) && (
+        {phase === "idle" && !initializing && accounts.length > 0 && (
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: "#8e8e93", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 10 }}>
               Scan
@@ -898,7 +899,7 @@ export default function GmailCleaner() {
           </div>
         )}
 
-        <div style={{ marginTop: 40, fontSize: 12, color: "#3a3a3c", textAlign: "center" }}>v2.0</div>
+        <div style={{ marginTop: 40, fontSize: 13, color: "#55556a", textAlign: "center" }}>v2.1</div>
       </div>
 
       {/* Sticky bottom bar */}
