@@ -123,6 +123,7 @@ function extractTraumaTotal(buffer, emailDate) {
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
+  try {
   const { emails } = req.body;
   if (!emails?.length) return res.status(400).json({ error: "Missing emails" });
 
@@ -162,4 +163,8 @@ export default async function handler(req, res) {
   }
 
   res.json({ results });
+  } catch (topErr) {
+    // Always return JSON so the client never gets an HTML error page
+    res.status(500).json({ results: [], error: topErr.message });
+  }
 }
