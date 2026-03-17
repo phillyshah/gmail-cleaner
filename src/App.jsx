@@ -361,9 +361,11 @@ export default function GmailCleaner() {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [logs]);
 
-  // Default: all accounts selected
+  const IMAP_ACCOUNT = "andybot@phillyshah.com";
+
+  // Default: all accounts selected (including IMAP)
   useEffect(() => {
-    setSelectedAccounts(accounts.map((a) => a.email));
+    setSelectedAccounts([...accounts.map((a) => a.email), IMAP_ACCOUNT]);
   }, [accounts]);
 
   const toggleAccountSelection = (email) => {
@@ -417,12 +419,28 @@ export default function GmailCleaner() {
         const result = await res.json();
         if (result.error) { addLog(`Error: ${result.error}`); continue; }
         all.push(
-          ...(result.promotions || []).map((e) => ({ ...e, category: "promo", account: account.email })),
-          ...(result.social || []).map((e) => ({ ...e, category: "social", account: account.email })),
+          ...(result.promotions || []).map((e) => ({ ...e, category: "promo", account: account.email, source: "gmail" })),
+          ...(result.social || []).map((e) => ({ ...e, category: "social", account: account.email, source: "gmail" })),
         );
         addLog(`${account.email}: ${result.promotions.length} promos, ${result.social.length} social.`);
       } catch (err) {
         addLog(`Error (${account.email}): ${err.message}`);
+      }
+    }
+
+    // Scan IMAP account
+    if (selectedAccounts.includes(IMAP_ACCOUNT)) {
+      addLog(`Scanning ${IMAP_ACCOUNT} (IMAP)…`);
+      try {
+        const res = await fetch("/api/scan-imap", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        const result = await res.json();
+        if (result.error) { addLog(`IMAP error: ${result.error}`); }
+        else {
+          all.push(...(result.emails || []));
+          addLog(`${IMAP_ACCOUNT}: ${result.emails.length} emails.`);
+        }
+      } catch (err) {
+        addLog(`IMAP error: ${err.message}`);
       }
     }
 
@@ -463,13 +481,33 @@ export default function GmailCleaner() {
     setPhase("cleaning");
     addLog(`${action === "spam" ? "Marking spam" : "Trashing"} ${toAct.length} messages…`);
 
+    let totalDone = 0;
+
+    // Handle IMAP emails
+    const imapEmails = toAct.filter((e) => e.source === "imap");
+    if (imapEmails.length > 0) {
+      const endpoint = action === "spam" ? "/api/spam-imap" : "/api/trash-imap";
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ uids: imapEmails.map((e) => e.id) }),
+        });
+        const result = await res.json();
+        totalDone += result.deleted || result.marked || imapEmails.length;
+      } catch (err) {
+        addLog(`IMAP error: ${err.message}`);
+      }
+    }
+
+    // Handle Gmail emails
+    const gmailEmails = toAct.filter((e) => e.source !== "imap");
     const byAccount = {};
-    toAct.forEach((e) => {
+    gmailEmails.forEach((e) => {
       if (!byAccount[e.account]) byAccount[e.account] = [];
       byAccount[e.account].push(e.id);
     });
 
-    let totalDone = 0;
     const endpoint = action === "spam" ? "/api/spam" : "/api/trash";
     for (const [accountEmail, ids] of Object.entries(byAccount)) {
       const account = accounts.find((a) => a.email === accountEmail);
@@ -596,7 +634,7 @@ export default function GmailCleaner() {
         )}
 
         {/* Account selector chips (only when multiple accounts) */}
-        {accounts.length > 1 && phase === "idle" && !initializing && (
+        {phase === "idle" && !initializing && (accounts.length > 1 || true) && (
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: "#8e8e93", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 10 }}>
               Scan
@@ -606,16 +644,21 @@ export default function GmailCleaner() {
                 const isActive = selectedAccounts.includes(account.email);
                 const label = account.email?.split("@")[0] || account.email;
                 return (
-                  <button
-                    key={account.email}
-                    className={`iz-account-chip${isActive ? " active" : ""}`}
-                    onClick={() => toggleAccountSelection(account.email)}
-                  >
+                  <button key={account.email} className={`iz-account-chip${isActive ? " active" : ""}`}
+                    onClick={() => toggleAccountSelection(account.email)}>
                     <span className="iz-account-chip-dot" />
                     {label}
                   </button>
                 );
               })}
+              {/* IMAP account chip */}
+              <button
+                className={`iz-account-chip${selectedAccounts.includes(IMAP_ACCOUNT) ? " active" : ""}`}
+                onClick={() => toggleAccountSelection(IMAP_ACCOUNT)}
+              >
+                <span className="iz-account-chip-dot" style={{ background: "#ff9f0a" }} />
+                andybot
+              </button>
             </div>
           </div>
         )}
