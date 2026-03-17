@@ -36,14 +36,39 @@ function applyChoices(keptEmails, trashedEmails) {
   localStorage.setItem(PREFS_KEY, JSON.stringify({ safe: [...safeSet], trash: trashCounts }));
 }
 
-// -- Google OAuth with auto-reconnect --
+// -- Token cache (avoids re-auth on every visit) --
+const TOKEN_CACHE_KEY = "gmail_token_cache";
+
+function getCachedToken() {
+  try {
+    const d = JSON.parse(localStorage.getItem(TOKEN_CACHE_KEY) || "{}");
+    // Keep using token if it has more than 2 minutes left
+    if (d.token && d.expiresAt && d.expiresAt > Date.now() + 120_000) return d.token;
+  } catch {}
+  return null;
+}
+
+function cacheToken(token, expiresIn = 3600) {
+  localStorage.setItem(TOKEN_CACHE_KEY, JSON.stringify({
+    token,
+    expiresAt: Date.now() + expiresIn * 1000,
+  }));
+}
+
+function clearTokenCache() {
+  localStorage.removeItem(TOKEN_CACHE_KEY);
+  localStorage.removeItem("gmail_connected");
+}
+
+// -- Google OAuth --
 function useGoogleAuth() {
-  const [accessToken, setAccessToken] = useState(null);
-  const [autoConnecting, setAutoConnecting] = useState(!!localStorage.getItem("gmail_connected"));
+  const [accessToken, setAccessToken] = useState(() => getCachedToken());
   const clientRef = useRef(null);
 
   useEffect(() => {
-    const wasConnected = localStorage.getItem("gmail_connected");
+    // Token already loaded from cache — no need to touch Google
+    if (getCachedToken()) return;
+
     const interval = setInterval(() => {
       if (window.google?.accounts?.oauth2) {
         clearInterval(interval);
@@ -51,18 +76,14 @@ function useGoogleAuth() {
           client_id: GOOGLE_CLIENT_ID,
           scope: SCOPES,
           callback: (response) => {
-            setAutoConnecting(false);
             if (response.access_token) {
+              cacheToken(response.access_token, response.expires_in);
               localStorage.setItem("gmail_connected", "1");
               setAccessToken(response.access_token);
             }
           },
-          error_callback: () => setAutoConnecting(false),
+          error_callback: () => {},
         });
-        if (wasConnected) {
-          setAutoConnecting(true);
-          clientRef.current.requestAccessToken({ prompt: "" });
-        }
       }
     }, 100);
     return () => clearInterval(interval);
@@ -71,11 +92,11 @@ function useGoogleAuth() {
   const signIn = () => clientRef.current?.requestAccessToken({ prompt: "select_account" });
   const signOut = () => {
     if (accessToken) window.google.accounts.oauth2.revoke(accessToken);
-    localStorage.removeItem("gmail_connected");
+    clearTokenCache();
     setAccessToken(null);
   };
 
-  return { accessToken, signIn, signOut, autoConnecting };
+  return { accessToken, signIn, signOut };
 }
 
 // -- Global CSS (Apple design language) --
@@ -294,7 +315,7 @@ function EmailRow({ email, checked, onToggle, trashCount, isSafe }) {
 
 // -- Main --
 export default function GmailCleaner() {
-  const { accessToken, signIn, signOut, autoConnecting } = useGoogleAuth();
+  const { accessToken, signIn, signOut } = useGoogleAuth();
   const [phase, setPhase] = useState("idle");
   const [emails, setEmails] = useState([]);
   const [selected, setSelected] = useState(new Set());
@@ -479,12 +500,6 @@ export default function GmailCleaner() {
         {!accessToken && !autoConnecting && (
           <button className="iz-btn iz-btn-google" onClick={signIn}>
             <GoogleIcon /> Sign in with Google
-          </button>
-        )}
-
-        {autoConnecting && (
-          <button className="iz-btn iz-btn-primary" disabled>
-            <Spinner /> Connecting...
           </button>
         )}
 
