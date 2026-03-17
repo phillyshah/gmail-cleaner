@@ -48,15 +48,28 @@ function buildCriteriaPrompt() {
   }).join("\n\n");
 }
 
+function extractZillowUrl(html) {
+  // Pull all hrefs from anchor tags, find the first Zillow property link
+  const hrefMatches = [...html.matchAll(/href=["']([^"']+)["']/gi)].map((m) => m[1]);
+  const zillow = hrefMatches.find((u) =>
+    /zillow\.com\/(homes|homedetails|b|mls)[^"'\s]*/i.test(u)
+  );
+  // Zillow often wraps links through a redirect — return raw URL, Claude can surface it
+  return zillow || hrefMatches.find((u) => u.includes("zillow.com")) || null;
+}
+
 function extractBody(email) {
   function decode(data) {
     return Buffer.from(data.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8");
   }
+  let zillowUrl = null;
   function getPart(part) {
     if (!part) return null;
     if (part.mimeType === "text/plain" && part.body?.data) return decode(part.body.data);
     if (part.mimeType === "text/html" && part.body?.data) {
-      return decode(part.body.data).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      const html = decode(part.body.data);
+      if (!zillowUrl) zillowUrl = extractZillowUrl(html);
+      return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
     }
     if (part.parts) {
       for (const sub of part.parts) {
@@ -66,7 +79,9 @@ function extractBody(email) {
     }
     return null;
   }
-  return getPart(email.payload) || email.snippet || "";
+  const text = getPart(email.payload) || email.snippet || "";
+  // Append extracted URL so Claude can find it even if not in visible text
+  return zillowUrl ? `${text}\n\nZILLOW_URL: ${zillowUrl}` : text;
 }
 
 async function extractListing(subject, body) {
@@ -163,6 +178,9 @@ async function analyzeListing(subject, body) {
 
 async function sendTelegram(listing) {
   const price = listing.price ? `$${Number(listing.price).toLocaleString()}` : "Unknown";
+  // Extract URL from body fallback if Claude didn't pull it
+  const url = listing.url ||
+    (listing._body || "").match(/ZILLOW_URL: (\S+)/)?.[1] || null;
   const msg =
     `🏠 *Investment Match!*\n\n` +
     `📍 ${listing.address || "Unknown address"}\n` +
@@ -171,7 +189,7 @@ async function sendTelegram(listing) {
     `🏡 ${listing.type || "Unknown type"}\n` +
     `📮 ZIP: ${listing.zip || "?"}\n\n` +
     `✅ ${listing.reason}\n\n` +
-    (listing.url ? `[View on Zillow](${listing.url})` : "");
+    (url ? `[View on Zillow](${url})` : "⚠️ No Zillow link found");
 
   await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
     method: "POST",
@@ -220,7 +238,7 @@ export default async function handler(req, res) {
 
       await markAsRead(email.id, accessToken);
       if (analysis.matches) {
-        await sendTelegram(analysis);
+        await sendTelegram({ ...analysis, _body: body });
         results.push({ id: email.id, action: "notified", ...analysis });
       } else {
         await trashEmail(email.id, accessToken);
