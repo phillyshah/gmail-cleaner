@@ -184,23 +184,33 @@ async function processTraumaEmail(email) {
     if (!buffer) { await tg(`⚠️ No Excel attachment found in trauma dashboard email`); return; }
 
     const workbook = XLSX.read(buffer, { type: "buffer" });
-    const month = new Date(emailDate).toLocaleString("en-US", { month: "long", year: "numeric" });
-    const sheetsText = workbook.SheetNames.map((n) => `=== ${n} ===\n${XLSX.utils.sheet_to_csv(workbook.Sheets[n])}`).join("\n\n").substring(0, 10000);
-
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001", max_tokens: 256,
-        messages: [{ role: "user", content: `Find the "Revenue by Product Type" table and extract the Grand Total for ${month}.\n\n${sheetsText}\n\nRespond ONLY with JSON: {"amount": 123456.78, "formatted": "$123,456", "found": true}` }],
-      }),
-    });
-    const data = await res.json();
-    const text = data.content?.[0]?.text || "{}";
-    const parsed = JSON.parse(text.substring(text.indexOf("{"), text.lastIndexOf("}") + 1));
+    const ws = workbook.Sheets["Trauma Dashboard"] || workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+    const currentMonth = new Date(emailDate).getMonth() + 1;
+    let colHeaderRow = -1, grandTotalRow = -1, sectionStart = -1;
+    for (let i = 0; i < rows.length; i++) {
+      const cell = String(rows[i][0] || "").trim();
+      if (cell.toLowerCase().includes("revenue by product type")) sectionStart = i;
+      if (sectionStart !== -1) {
+        if (cell.toLowerCase() === "product type" && rows[i].some((c) => String(c) === "Grand Total")) colHeaderRow = i;
+        if (colHeaderRow !== -1 && cell === "Grand Total") { grandTotalRow = i; break; }
+        if (i > sectionStart + 2 && /revenue by (surgeon|manager|distributor)/i.test(cell)) break;
+      }
+    }
     const dateStr = new Date(emailDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
-    if (parsed.found) await tg(`📊 MH Trauma sales as of ${dateStr} are ${parsed.formatted}`);
-    else await tg(`⚠️ Could not find Revenue by Product Type for ${month}`);
+    if (colHeaderRow === -1 || grandTotalRow === -1) {
+      await tg(`⚠️ Could not find Revenue by Product Type table in trauma dashboard`);
+    } else {
+      const headers = rows[colHeaderRow];
+      const monthColIdx = headers.findIndex((c, idx) => idx > 0 && Number(c) === currentMonth);
+      if (monthColIdx === -1) {
+        await tg(`⚠️ Month ${currentMonth} column not found in trauma dashboard`);
+      } else {
+        const amount = Number(rows[grandTotalRow][monthColIdx]) || 0;
+        const formatted = "$" + amount.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+        await tg(`📊 MH Trauma sales as of ${dateStr} are ${formatted}`);
+      }
+    }
   } catch (err) {
     await tg(`⚠️ Trauma processing error: ${err.message}`);
   }

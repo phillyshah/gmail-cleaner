@@ -65,48 +65,59 @@ async function fetchEmailAttachment(uid) {
   }
 }
 
-async function extractTraumaTotal(buffer, emailDate) {
+function extractTraumaTotal(buffer, emailDate) {
   const workbook = XLSX.read(buffer, { type: "buffer" });
+  const ws = workbook.Sheets["Trauma Dashboard"] || workbook.Sheets[workbook.SheetNames[0]];
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+
+  const currentMonth = new Date(emailDate).getMonth() + 1; // 1–12
+
+  // Find the Revenue by Product Type section, its column header row, and its Grand Total row
+  let sectionStart = -1;
+  let colHeaderRow = -1;
+  let grandTotalRow = -1;
+
+  for (let i = 0; i < data.length; i++) {
+    const cell = String(data[i][0] || "").trim();
+
+    if (cell.toLowerCase().includes("revenue by product type")) {
+      sectionStart = i;
+    }
+
+    if (sectionStart !== -1) {
+      // Column header row contains "Product Type" and "Grand Total"
+      if (cell.toLowerCase() === "product type" && data[i].some((c) => String(c) === "Grand Total")) {
+        colHeaderRow = i;
+      }
+      // Grand Total data row (after column headers are found)
+      if (colHeaderRow !== -1 && cell === "Grand Total") {
+        grandTotalRow = i;
+        break;
+      }
+      // Stop if we've hit the next section
+      if (i > sectionStart + 2 && /revenue by (surgeon|manager|distributor)/i.test(cell)) {
+        break;
+      }
+    }
+  }
+
+  if (colHeaderRow === -1 || grandTotalRow === -1) {
+    return { found: false, error: "Could not locate Revenue by Product Type Grand Total row" };
+  }
+
+  // Find which column matches the current month number
+  const headers = data[colHeaderRow];
+  const monthColIdx = headers.findIndex((c, idx) => idx > 0 && Number(c) === currentMonth);
+
+  if (monthColIdx === -1) {
+    return { found: false, error: `Month ${currentMonth} column not found (headers: ${headers.slice(0, 6).join(", ")})` };
+  }
+
+  const amount = Number(data[grandTotalRow][monthColIdx]) || 0;
+  const formatted = "$" + amount.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
   const month = new Date(emailDate).toLocaleString("en-US", { month: "long", year: "numeric" });
 
-  // Combine all sheets into text for Claude
-  const sheetsText = workbook.SheetNames.map((name) => {
-    const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[name]);
-    return `=== Sheet: ${name} ===\n${csv}`;
-  }).join("\n\n").substring(0, 10000);
-
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 256,
-      messages: [{
-        role: "user",
-        content: `In this trauma sales dashboard spreadsheet, find the "Revenue by Product Type" table and extract the Grand Total for ${month}.
-
-${sheetsText}
-
-Respond ONLY with valid JSON, no markdown:
-{"amount": 123456.78, "formatted": "$123,456", "month": "${month}", "found": true}
-If not found: {"amount": 0, "formatted": "unknown", "month": "${month}", "found": false}`,
-      }],
-    }),
-  });
-
-  const data = await res.json();
-  const text = data.content?.[0]?.text || "{}";
-  try {
-    const start = text.indexOf("{");
-    const end = text.lastIndexOf("}");
-    return JSON.parse(text.substring(start, end + 1));
-  } catch {
-    return { amount: 0, formatted: "unknown", found: false, month };
-  }
+  return { found: true, amount, formatted, month };
 }
 
 export default async function handler(req, res) {
