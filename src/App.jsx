@@ -60,43 +60,85 @@ function clearTokenCache() {
   localStorage.removeItem("gmail_connected");
 }
 
+const REFRESH_KEY = "gmail_refresh_token";
+
+async function silentRefresh() {
+  const refreshToken = localStorage.getItem(REFRESH_KEY);
+  if (!refreshToken) return null;
+  try {
+    const res = await fetch("/api/auth/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    const data = await res.json();
+    if (data.access_token) {
+      cacheToken(data.access_token, data.expires_in);
+      return data.access_token;
+    }
+    // Refresh token revoked — clear it
+    localStorage.removeItem(REFRESH_KEY);
+  } catch {}
+  return null;
+}
+
 // -- Google OAuth --
 function useGoogleAuth() {
   const [accessToken, setAccessToken] = useState(() => getCachedToken());
-  const clientRef = useRef(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const codeClientRef = useRef(null);
 
   useEffect(() => {
-    // Token already loaded from cache — no need to touch Google
+    // 1. Valid cached access token — nothing to do
     if (getCachedToken()) return;
 
+    // 2. Have a refresh token — silently get a new access token, no popup
+    if (localStorage.getItem(REFRESH_KEY)) {
+      setRefreshing(true);
+      silentRefresh().then((token) => {
+        setRefreshing(false);
+        if (token) setAccessToken(token);
+      });
+      return;
+    }
+
+    // 3. First time — set up code client for one-time authorization
     const interval = setInterval(() => {
       if (window.google?.accounts?.oauth2) {
         clearInterval(interval);
-        clientRef.current = window.google.accounts.oauth2.initTokenClient({
+        codeClientRef.current = window.google.accounts.oauth2.initCodeClient({
           client_id: GOOGLE_CLIENT_ID,
           scope: SCOPES,
-          callback: (response) => {
-            if (response.access_token) {
-              cacheToken(response.access_token, response.expires_in);
-              localStorage.setItem("gmail_connected", "1");
-              setAccessToken(response.access_token);
+          ux_mode: "popup",
+          callback: async (response) => {
+            if (!response.code) return;
+            const res = await fetch("/api/auth/exchange", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ code: response.code }),
+            });
+            const tokens = await res.json();
+            if (tokens.access_token) {
+              if (tokens.refresh_token) localStorage.setItem(REFRESH_KEY, tokens.refresh_token);
+              cacheToken(tokens.access_token, tokens.expires_in);
+              setAccessToken(tokens.access_token);
             }
           },
-          error_callback: () => {},
         });
       }
     }, 100);
     return () => clearInterval(interval);
   }, []);
 
-  const signIn = () => clientRef.current?.requestAccessToken({ prompt: "select_account" });
+  const signIn = () => codeClientRef.current?.requestCode();
   const signOut = () => {
     if (accessToken) window.google.accounts.oauth2.revoke(accessToken);
     clearTokenCache();
+    localStorage.removeItem(REFRESH_KEY);
     setAccessToken(null);
   };
 
-  return { accessToken, signIn, signOut };
+  return { accessToken, signIn, signOut, refreshing };
 }
 
 // -- Global CSS (Apple design language) --
@@ -315,7 +357,7 @@ function EmailRow({ email, checked, onToggle, trashCount, isSafe }) {
 
 // -- Main --
 export default function GmailCleaner() {
-  const { accessToken, signIn, signOut } = useGoogleAuth();
+  const { accessToken, signIn, signOut, refreshing } = useGoogleAuth();
   const [phase, setPhase] = useState("idle");
   const [emails, setEmails] = useState([]);
   const [selected, setSelected] = useState(new Set());
@@ -497,7 +539,12 @@ export default function GmailCleaner() {
         )}
 
         {/* Connect / scanning / scan */}
-        {!accessToken && !autoConnecting && (
+        {refreshing && (
+          <button className="iz-btn iz-btn-primary" disabled>
+            <Spinner /> Connecting…
+          </button>
+        )}
+        {!accessToken && !refreshing && (
           <button className="iz-btn iz-btn-google" onClick={signIn}>
             <GoogleIcon /> Sign in with Google
           </button>
