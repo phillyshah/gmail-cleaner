@@ -1,25 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 
-const GMAIL_MCP = { type: "url", url: "https://gmail.mcp.claude.com/mcp", name: "gmail-mcp" };
-
-const CLEANUP_PROMPT = `You are an email cleanup assistant. Search the user's Gmail and identify emails to clean up.
-STEP 1: Search for promotional/marketing emails using query: "category:promotions is:unread" and also "category:promotions is:read" (limit to last 30 days)
-STEP 2: Search for social notification emails using query: "category:social" (limit to last 30 days)
-STEP 3: For each email found, note the subject, sender, and ID.
-STEP 4: Provide a JSON summary of what you found.
-Respond ONLY with valid JSON in this exact format, no markdown fences:
-{
-  "promotions": [{"id": "...", "subject": "...", "sender": "..."}],
-  "social": [{"id": "...", "subject": "...", "sender": "..."}],
-  "summary": "Found X promotional and Y social emails"
-}
-If you cannot access Gmail or get errors, respond with:
-{"promotions": [], "social": [], "summary": "Error: <description>", "error": true}`;
-
-const DELETE_PROMPT = (ids) => `Trash the following Gmail messages by their IDs. Process each one:
-${ids.map(id => `- Message ID: ${id}`).join('\n')}
-After processing, respond ONLY with valid JSON, no markdown:
-{"deleted": ${ids.length}, "errors": 0, "details": "Successfully trashed ${ids.length} messages"}`;
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+const SCOPES = "https://www.googleapis.com/auth/gmail.modify";
 
 const styles = {
   app: {
@@ -111,6 +93,23 @@ const styles = {
     color: "#ff4d00",
     border: "1px solid #ff4d00",
   },
+  btnGoogle: {
+    background: "#fff",
+    color: "#111",
+    border: "none",
+    padding: "14px 32px",
+    fontSize: "11px",
+    fontWeight: 700,
+    letterSpacing: "2px",
+    textTransform: "uppercase",
+    cursor: "pointer",
+    fontFamily: "'JetBrains Mono', monospace",
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "10px",
+  },
   stat: {
     display: "flex",
     justifyContent: "space-between",
@@ -118,10 +117,7 @@ const styles = {
     padding: "12px 0",
     borderBottom: "1px solid #1a1a1a",
   },
-  statLabel: {
-    fontSize: "12px",
-    color: "#666",
-  },
+  statLabel: { fontSize: "12px", color: "#666" },
   statValue: {
     fontSize: "20px",
     fontWeight: 700,
@@ -180,6 +176,7 @@ const styles = {
     background: type === "promo" ? "#1a0f00" : "#0f0f1a",
     color: type === "promo" ? "#ff8c42" : "#6b8afd",
     border: `1px solid ${type === "promo" ? "#2a1800" : "#1a1a2e"}`,
+    flexShrink: 0,
   }),
   summary: {
     background: "#0d1a00",
@@ -190,6 +187,21 @@ const styles = {
     color: "#8aff42",
     lineHeight: 1.6,
   },
+  connected: {
+    fontSize: "11px",
+    color: "#555",
+    marginBottom: "16px",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+  },
+  dot: (color) => ({
+    width: "6px",
+    height: "6px",
+    borderRadius: "50%",
+    background: color,
+    flexShrink: 0,
+  }),
 };
 
 const keyframes = `
@@ -198,54 +210,45 @@ const keyframes = `
   @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@400;700&display=swap');
 `;
 
-async function callClaude(prompt, useMcp = true) {
-  const body = {
-    model: "claude-sonnet-4-6",
-    max_tokens: 4096,
-    messages: [{ role: "user", content: prompt }],
+function useGoogleAuth() {
+  const [accessToken, setAccessToken] = useState(null);
+  const clientRef = useRef(null);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (window.google?.accounts?.oauth2) {
+        clearInterval(interval);
+        clientRef.current = window.google.accounts.oauth2.initTokenClient({
+          client_id: GOOGLE_CLIENT_ID,
+          scope: SCOPES,
+          callback: (response) => {
+            if (response.access_token) setAccessToken(response.access_token);
+          },
+        });
+      }
+    }, 100);
+    return () => clearInterval(interval);
+  }, []);
+
+  const signIn = () => clientRef.current?.requestAccessToken();
+  const signOut = () => {
+    if (accessToken) window.google.accounts.oauth2.revoke(accessToken);
+    setAccessToken(null);
   };
-  if (useMcp) body.mcp_servers = [GMAIL_MCP];
 
-  const res = await fetch("/api/claude", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  const data = await res.json();
-
-  // Surface API-level errors (auth failures, bad params, etc.)
-  if (data.error) {
-    return { error: true, summary: `API error: ${data.error.message || JSON.stringify(data.error)}` };
-  }
-
-  const texts = (data.content || [])
-    .filter(b => b.type === "text")
-    .map(b => b.text);
-  const full = texts.join("\n");
-
-  try {
-    const cleaned = full.replace(/```json|```/g, "").trim();
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start !== -1 && end !== -1) {
-      return JSON.parse(cleaned.substring(start, end + 1));
-    }
-  } catch (e) {
-    // ignore parse errors
-  }
-  return { raw: full, error: true, summary: `Could not parse response: ${full.slice(0, 200)}` };
+  return { accessToken, signIn, signOut };
 }
 
 export default function GmailCleaner() {
-  const [phase, setPhase] = useState("idle"); // idle, scanning, scanned, cleaning, done
+  const { accessToken, signIn, signOut } = useGoogleAuth();
+  const [phase, setPhase] = useState("idle");
   const [scanResult, setScanResult] = useState(null);
   const [cleanResult, setCleanResult] = useState(null);
   const [logs, setLogs] = useState([]);
   const logRef = useRef(null);
 
   const addLog = useCallback((msg) => {
-    setLogs(prev => [...prev, { text: msg, time: new Date().toLocaleTimeString() }]);
+    setLogs((prev) => [...prev, { text: msg, time: new Date().toLocaleTimeString() }]);
   }, []);
 
   useEffect(() => {
@@ -257,20 +260,24 @@ export default function GmailCleaner() {
     setScanResult(null);
     setCleanResult(null);
     setLogs([]);
-    addLog("Connecting to Gmail MCP...");
-    addLog("Searching promotions & social categories...");
+    addLog("Scanning Gmail...");
     try {
-      const result = await callClaude(CLEANUP_PROMPT);
-      if (result.error && !result.promotions) {
-        addLog(`Error: ${result.summary || result.raw || "Unknown error"}`);
+      const res = await fetch("/api/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken }),
+      });
+      const result = await res.json();
+      if (result.error) {
+        addLog(`Error: ${result.error}`);
         setPhase("idle");
         return;
       }
       setScanResult(result);
-      addLog(`Scan complete. Found ${(result.promotions || []).length} promotional, ${(result.social || []).length} social.`);
+      addLog(`Found ${result.promotions.length} promotional, ${result.social.length} social.`);
       setPhase("scanned");
     } catch (err) {
-      addLog(`Connection error: ${err.message}`);
+      addLog(`Error: ${err.message}`);
       setPhase("idle");
     }
   };
@@ -279,32 +286,32 @@ export default function GmailCleaner() {
     if (!scanResult) return;
     setPhase("cleaning");
     const allIds = [
-      ...(scanResult.promotions || []).map(e => e.id),
-      ...(scanResult.social || []).map(e => e.id),
-    ].filter(Boolean);
+      ...scanResult.promotions.map((e) => e.id),
+      ...scanResult.social.map((e) => e.id),
+    ];
 
     if (allIds.length === 0) {
       addLog("Nothing to clean.");
       setPhase("done");
-      setCleanResult({ deleted: 0, details: "Inbox already clean!" });
+      setCleanResult({ deleted: 0 });
       return;
     }
 
     addLog(`Trashing ${allIds.length} messages...`);
-    let totalDeleted = 0;
-    for (let i = 0; i < allIds.length; i += 10) {
-      const batch = allIds.slice(i, i + 10);
-      addLog(`Processing batch ${Math.floor(i / 10) + 1}...`);
-      try {
-        const result = await callClaude(DELETE_PROMPT(batch));
-        totalDeleted += (result.deleted || batch.length);
-      } catch (e) {
-        addLog(`Batch error: ${e.message}`);
-      }
+    try {
+      const res = await fetch("/api/trash", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken, ids: allIds }),
+      });
+      const result = await res.json();
+      setCleanResult(result);
+      addLog(`Done. ${result.deleted} messages moved to trash.`);
+      setPhase("done");
+    } catch (err) {
+      addLog(`Error: ${err.message}`);
+      setPhase("idle");
     }
-    setCleanResult({ deleted: totalDeleted, details: `Trashed ${totalDeleted} messages.` });
-    addLog(`Done. ${totalDeleted} messages moved to trash.`);
-    setPhase("done");
   };
 
   const reset = () => {
@@ -331,10 +338,41 @@ export default function GmailCleaner() {
           </div>
         </div>
 
-        {phase === "idle" && (
-          <button style={styles.btn} onClick={handleScan}
-            onMouseEnter={e => { e.target.style.background = "#ff6a2a"; }}
-            onMouseLeave={e => { e.target.style.background = "#ff4d00"; }}>
+        {/* Auth state */}
+        {accessToken && (
+          <div style={styles.connected}>
+            <span style={styles.dot("#8aff42")} />
+            Gmail connected
+            <span
+              onClick={signOut}
+              style={{ marginLeft: "auto", cursor: "pointer", color: "#444" }}
+            >
+              disconnect
+            </span>
+          </div>
+        )}
+
+        {/* Connect button */}
+        {!accessToken && (
+          <button style={styles.btnGoogle} onClick={signIn}>
+            <svg width="16" height="16" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/>
+              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+            </svg>
+            Connect Gmail
+          </button>
+        )}
+
+        {/* Scan button */}
+        {accessToken && phase === "idle" && (
+          <button
+            style={styles.btn}
+            onClick={handleScan}
+            onMouseEnter={(e) => { e.target.style.background = "#ff6a2a"; }}
+            onMouseLeave={(e) => { e.target.style.background = "#ff4d00"; }}
+          >
             Scan Inbox
           </button>
         )}
@@ -349,6 +387,7 @@ export default function GmailCleaner() {
           </button>
         )}
 
+        {/* Results */}
         {scanResult && phase !== "idle" && (
           <div style={{ marginTop: "24px", animation: "fadeIn 0.4s ease" }}>
             <div style={styles.card}>
@@ -367,14 +406,14 @@ export default function GmailCleaner() {
               <div style={styles.card}>
                 <span style={styles.cardLabel}>Preview ({totalFound} emails)</span>
                 <div style={{ maxHeight: "240px", overflowY: "auto" }}>
-                  {(scanResult.promotions || []).slice(0, 15).map((e, i) => (
+                  {scanResult.promotions.slice(0, 15).map((e, i) => (
                     <div key={`p-${i}`} style={styles.emailRow}>
                       <span style={styles.badge("promo")}>promo</span>
                       <span style={styles.emailSender}>{e.sender}</span>
                       <span style={styles.emailSubject}>{e.subject}</span>
                     </div>
                   ))}
-                  {(scanResult.social || []).slice(0, 15).map((e, i) => (
+                  {scanResult.social.slice(0, 15).map((e, i) => (
                     <div key={`s-${i}`} style={styles.emailRow}>
                       <span style={styles.badge("social")}>social</span>
                       <span style={styles.emailSender}>{e.sender}</span>
@@ -392,35 +431,51 @@ export default function GmailCleaner() {
 
             {phase === "scanned" && totalFound > 0 && (
               <div style={{ display: "flex", gap: "12px", marginTop: "8px" }}>
-                <button style={{ ...styles.btn, ...styles.btnDanger, flex: 1 }}
+                <button
+                  style={{ ...styles.btn, ...styles.btnDanger, flex: 1 }}
                   onClick={handleClean}
-                  onMouseEnter={e => { e.target.style.background = "#ff4d00"; e.target.style.color = "#0a0a0a"; }}
-                  onMouseLeave={e => { e.target.style.background = "transparent"; e.target.style.color = "#ff4d00"; }}>
+                  onMouseEnter={(e) => { e.target.style.background = "#ff4d00"; e.target.style.color = "#0a0a0a"; }}
+                  onMouseLeave={(e) => { e.target.style.background = "transparent"; e.target.style.color = "#ff4d00"; }}
+                >
                   Trash {totalFound} Emails
                 </button>
-                <button style={{ ...styles.btn, background: "#1a1a1a", color: "#666", flex: 0.4 }}
+                <button
+                  style={{ ...styles.btn, background: "#1a1a1a", color: "#666", flex: 0.4 }}
                   onClick={reset}
-                  onMouseEnter={e => { e.target.style.color = "#999"; }}
-                  onMouseLeave={e => { e.target.style.color = "#666"; }}>
+                  onMouseEnter={(e) => { e.target.style.color = "#999"; }}
+                  onMouseLeave={(e) => { e.target.style.color = "#666"; }}
+                >
                   Cancel
                 </button>
+              </div>
+            )}
+
+            {phase === "scanned" && totalFound === 0 && (
+              <div style={styles.summary}>
+                ✓ Inbox is already clean!
+                <div style={{ marginTop: "16px" }}>
+                  <button style={{ ...styles.btn, background: "#1a2e00", color: "#8aff42", border: "1px solid #2a4e00" }} onClick={reset}>
+                    Run Again
+                  </button>
+                </div>
               </div>
             )}
           </div>
         )}
 
+        {/* Done */}
         {phase === "done" && cleanResult && (
           <div style={{ ...styles.summary, animation: "fadeIn 0.4s ease", marginTop: "16px" }}>
-            ✓ {cleanResult.details}
+            ✓ Trashed {cleanResult.deleted} messages.
             <div style={{ marginTop: "16px" }}>
-              <button style={{ ...styles.btn, background: "#1a2e00", color: "#8aff42", border: "1px solid #2a4e00" }}
-                onClick={reset}>
+              <button style={{ ...styles.btn, background: "#1a2e00", color: "#8aff42", border: "1px solid #2a4e00" }} onClick={reset}>
                 Run Again
               </button>
             </div>
           </div>
         )}
 
+        {/* Log */}
         {logs.length > 0 && (
           <div style={{ ...styles.card, marginTop: "24px" }} ref={logRef}>
             <span style={styles.cardLabel}>Activity Log</span>
@@ -435,7 +490,7 @@ export default function GmailCleaner() {
         )}
 
         <div style={{ marginTop: "48px", fontSize: "10px", color: "#333", letterSpacing: "2px", textTransform: "uppercase" }}>
-          Gmail Cleanup · v1.0
+          Gmail Cleanup · v2.0
         </div>
       </div>
     </div>
