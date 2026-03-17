@@ -241,22 +241,19 @@ async function processListing(email, accessToken) {
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
 
-  // Respond to Telegram immediately — function keeps running
-  res.json({ ok: true });
-
   const { message } = req.body || {};
-  if (!message?.text) return;
-  if (String(message.chat.id) !== process.env.TELEGRAM_CHAT_ID) return;
+  if (!message?.text) return res.json({ ok: true });
+  if (String(message.chat.id) !== process.env.TELEGRAM_CHAT_ID) return res.json({ ok: true });
 
   const cmd = message.text.trim().split(" ")[0].toLowerCase();
-  if (cmd !== "/clean") return;
+  if (cmd !== "/clean") return res.json({ ok: true });
 
   await tg("🧹 Starting cleanup...");
 
   const accounts = (await redis.get("gmail_accounts")) || [];
   if (!accounts.length) {
     await tg("❌ No Gmail accounts found. Open the app and connect your accounts first.");
-    return;
+    return res.json({ ok: true });
   }
 
   let totalTrashed = 0, totalNotified = 0, totalListingsTrashed = 0;
@@ -300,4 +297,5 @@ export default async function handler(req, res) {
     `🏠 ${totalNotified} listings matched & Telegram sent\n` +
     `🗑 ${totalListingsTrashed} listings trashed (no match)`;
   await tg(summary);
+  res.json({ ok: true });
 }
