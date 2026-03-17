@@ -210,15 +210,15 @@ async function processListing(email, accessToken) {
   const evaluation = evaluateListing(listing);
   const result = { ...listing, ...evaluation };
 
-  // Mark as read always
-  await fetch(`${base}/messages/${email.id}/modify`, {
-    method: "POST", headers: { ...headers, "Content-Type": "application/json" },
-    body: JSON.stringify({ removeLabelIds: ["UNREAD"] }),
-  });
-
+  const jsonHeaders = { ...headers, "Content-Type": "application/json" };
   const url = result.url || zillowUrl || body.match(/ZILLOW_URL: (\S+)/)?.[1] || null;
 
   if (result.matches) {
+    // Mark as read, keep in inbox
+    await fetch(`${base}/messages/${email.id}/modify`, {
+      method: "POST", headers: jsonHeaders,
+      body: JSON.stringify({ removeLabelIds: ["UNREAD"] }),
+    });
     const price = result.price ? `$${Number(result.price).toLocaleString()}` : "Unknown";
     const msg =
       `🏠 *Investment Match!*\n\n` +
@@ -232,7 +232,14 @@ async function processListing(email, accessToken) {
     await tg(msg);
     return "notified";
   } else {
-    await fetch(`${base}/messages/${email.id}/trash`, { method: "POST", headers });
+    // Trash and mark as read in parallel
+    await Promise.all([
+      fetch(`${base}/messages/${email.id}/trash`, { method: "POST", headers }),
+      fetch(`${base}/messages/${email.id}/modify`, {
+        method: "POST", headers: jsonHeaders,
+        body: JSON.stringify({ removeLabelIds: ["UNREAD"] }),
+      }),
+    ]);
     return "trashed";
   }
 }

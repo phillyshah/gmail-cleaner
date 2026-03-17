@@ -217,18 +217,22 @@ async function sendTelegram(listing) {
 }
 
 async function markAsRead(id, accessToken) {
+  const headers = { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" };
   await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}/modify`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    method: "POST", headers,
     body: JSON.stringify({ removeLabelIds: ["UNREAD"] }),
   });
 }
 
 async function trashEmail(id, accessToken) {
-  await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}/trash`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const headers = { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" };
+  await Promise.all([
+    fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}/trash`, { method: "POST", headers }),
+    fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}/modify`, {
+      method: "POST", headers,
+      body: JSON.stringify({ removeLabelIds: ["UNREAD"] }),
+    }),
+  ]);
 }
 
 export default async function handler(req, res) {
