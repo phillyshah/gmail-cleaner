@@ -212,8 +212,9 @@ const globalCSS = `
   .iz-row-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex-shrink: 0; }
 
   .iz-pill { font-size: 10px; font-weight: 600; letter-spacing: 0.3px; padding: 3px 8px; border-radius: 20px; text-transform: uppercase; }
-  .iz-pill-promo  { background: rgba(255,159,10,0.15); color: #ff9f0a; }
-  .iz-pill-social { background: rgba(10,132,255,0.15); color: #0a84ff; }
+  .iz-pill-promo    { background: rgba(255,159,10,0.15); color: #ff9f0a; }
+  .iz-pill-social   { background: rgba(10,132,255,0.15); color: #0a84ff; }
+  .iz-pill-listing  { background: rgba(48,209,88,0.15); color: #30d158; }
   .iz-pill-account { font-size: 9px; font-weight: 500; padding: 2px 6px; border-radius: 20px; background: rgba(255,255,255,0.07); color: #636366; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .iz-section-hdr {
@@ -348,6 +349,8 @@ export default function GmailCleaner() {
   const [cleanResult, setCleanResult] = useState(null);
   const [logs, setLogs] = useState([]);
   const [selectedAccounts, setSelectedAccounts] = useState([]); // which accounts to scan
+  const [listingPhase, setListingPhase] = useState("idle"); // idle | processing | done
+  const [listingResults, setListingResults] = useState([]);
   const logRef = useRef(null);
 
   const addLog = useCallback((msg) => {
@@ -371,20 +374,24 @@ export default function GmailCleaner() {
     );
   };
 
-  const { reviewEmails, safeEmails, trashCountMap } = useMemo(() => {
+  const { reviewEmails, safeEmails, listingEmails, trashCountMap } = useMemo(() => {
     const prefs = loadPrefs();
     const safeSet = new Set(prefs.safe);
     const trashCounts = prefs.trash || {};
     const countMap = {};
-    const safe = [], review = [];
+    const safe = [], review = [], listings = [];
     emails.forEach((e) => {
       const addr = extractEmail(e.sender);
       countMap[e.id] = trashCounts[addr] || 0;
-      if (safeSet.has(addr)) safe.push(e);
+      const isListing =
+        addr.includes("zillow") &&
+        e.subject?.toLowerCase().includes("new listing");
+      if (isListing) listings.push(e);
+      else if (safeSet.has(addr)) safe.push(e);
       else review.push(e);
     });
     review.sort((a, b) => (countMap[b.id] || 0) - (countMap[a.id] || 0));
-    return { reviewEmails: review, safeEmails: safe, trashCountMap: countMap };
+    return { reviewEmails: review, safeEmails: safe, listingEmails: listings, trashCountMap: countMap };
   }, [emails]);
 
   const handleScan = async () => {
@@ -487,12 +494,54 @@ export default function GmailCleaner() {
     setPhase("done");
   };
 
+  const processListings = async () => {
+    if (!listingEmails.length) return;
+    setListingPhase("processing");
+    addLog(`Analyzing ${listingEmails.length} Zillow listing${listingEmails.length > 1 ? "s" : ""}…`);
+
+    const byAccount = {};
+    listingEmails.forEach((e) => {
+      if (!byAccount[e.account]) byAccount[e.account] = [];
+      byAccount[e.account].push(e);
+    });
+
+    const allResults = [];
+    for (const [accountEmail, emailBatch] of Object.entries(byAccount)) {
+      const account = accounts.find((a) => a.email === accountEmail);
+      if (!account) continue;
+      const token = await getValidToken(account);
+      if (!token) continue;
+      try {
+        const res = await fetch("/api/process-listings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accessToken: token, emails: emailBatch }),
+        });
+        const data = await res.json();
+        allResults.push(...(data.results || []));
+      } catch (err) {
+        addLog(`Error processing listings (${accountEmail}): ${err.message}`);
+      }
+    }
+
+    const notified = allResults.filter((r) => r.action === "notified").length;
+    const trashed = allResults.filter((r) => r.action === "trashed").length;
+    addLog(`Listings done: ${notified} matched (Telegram sent), ${trashed} trashed.`);
+    setListingResults(allResults);
+    setListingPhase("done");
+    // Remove processed listings from emails list
+    const processedIds = new Set(allResults.map((r) => r.id));
+    setEmails((prev) => prev.filter((e) => !processedIds.has(e.id)));
+  };
+
   const reset = () => {
     setPhase("idle");
     setEmails([]);
     setSelected(new Set());
     setCleanResult(null);
     setLogs([]);
+    setListingPhase("idle");
+    setListingResults([]);
   };
 
   const total = emails.length;
@@ -607,6 +656,52 @@ export default function GmailCleaner() {
                 <div className="iz-stat-val" style={{ color: "#30d158" }}>{keptCount}</div>
               </div>
             </div>
+
+            {listingEmails.length > 0 && listingPhase !== "done" && (
+              <div className="iz-card" style={{ borderLeft: "3px solid #30d158" }}>
+                <div className="iz-section-hdr" style={{ color: "#30d158" }}>
+                  🏠 Zillow Listings — {listingEmails.length}
+                </div>
+                {listingEmails.map((e) => (
+                  <div key={e.id} style={{ display: "flex", alignItems: "center", padding: "10px 16px", gap: 12, borderBottom: "1px solid rgba(84,84,88,0.3)" }}>
+                    <div className="iz-row-info">
+                      <div className="iz-row-sender">{e.subject}</div>
+                      <div className="iz-row-subject">{e.sender}</div>
+                    </div>
+                    <span className="iz-pill iz-pill-listing">listing</span>
+                  </div>
+                ))}
+                <div style={{ padding: "12px 16px" }}>
+                  <button
+                    className="iz-btn iz-btn-green"
+                    onClick={processListings}
+                    disabled={listingPhase === "processing"}
+                    style={{ fontSize: 14 }}
+                  >
+                    {listingPhase === "processing" ? <><Spinner /> Analyzing…</> : `Analyze ${listingEmails.length} Listing${listingEmails.length > 1 ? "s" : ""}`}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {listingPhase === "done" && listingResults.length > 0 && (
+              <div className="iz-card" style={{ padding: "16px" }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#30d158", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 10 }}>
+                  🏠 Listings Processed
+                </div>
+                {listingResults.map((r, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", borderBottom: "1px solid rgba(84,84,88,0.2)" }}>
+                    <span style={{ fontSize: 16 }}>{r.action === "notified" ? "✅" : "🗑️"}</span>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: r.action === "notified" ? "#30d158" : "#8e8e93" }}>
+                        {r.address || "Unknown address"}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#636366" }}>{r.reason}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {reviewEmails.length > 0 && (
               <div className="iz-card">
