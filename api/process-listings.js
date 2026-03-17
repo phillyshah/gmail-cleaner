@@ -69,34 +69,19 @@ function extractBody(email) {
   return getPart(email.payload) || email.snippet || "";
 }
 
-async function analyzeListing(subject, body) {
-  const prompt = `Analyze this Zillow listing email against investment criteria.
+async function extractListing(subject, body) {
+  const prompt = `Extract listing details from this Zillow email. Return ONLY valid JSON, no markdown.
 
 Subject: ${subject}
 Body: ${body.substring(0, 4000)}
 
-WATCHED ZIP CODES: ${WATCHED_ZIPS.join(", ")}
-
-Per-zip investment criteria:
-${buildCriteriaPrompt()}
-
-Instructions:
-- First check if the ZIP code is in the watched list. If not, it does NOT match.
-- For ZIP 15212: any property type is OK EXCEPT condos and vacant lots/land.
-- For all other zips: only single family homes and duplexes qualify.
-- For duplexes, use the TOTAL bedroom count across all units.
-- A listing matches ONLY if zip is watched AND property type is allowed AND price is under the limit for that type/bed count.
-
-Respond ONLY with valid JSON, no markdown:
 {
   "address": "full address",
-  "zip": "5-digit zip",
-  "type": "single family / duplex / condo / townhome / lot / other",
+  "zip": "5-digit zip code only",
+  "type": "single family / duplex / condo / townhome / lot / land / other",
   "beds": 3,
   "price": 185000,
-  "url": "zillow url if found",
-  "matches": true,
-  "reason": "3BR single family in 15228 at $185k — under $225k limit"
+  "url": "zillow url if found or null"
 }`;
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -108,7 +93,7 @@ Respond ONLY with valid JSON, no markdown:
     },
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 512,
+      max_tokens: 256,
       messages: [{ role: "user", content: prompt }],
     }),
   });
@@ -120,8 +105,60 @@ Respond ONLY with valid JSON, no markdown:
     const end = text.lastIndexOf("}");
     return JSON.parse(text.substring(start, end + 1));
   } catch {
-    return { matches: false, reason: "Could not parse listing details", address: "Unknown" };
+    return { zip: null, type: "unknown", beds: 0, price: 0, address: "Unknown" };
   }
+}
+
+function evaluateListing(listing) {
+  const zip = (listing.zip || "").trim();
+  const type = (listing.type || "").toLowerCase();
+  const beds = Number(listing.beds) || 0;
+  const price = Number(listing.price) || 0;
+
+  const criteria = CRITERIA[zip];
+  if (!criteria) {
+    return { matches: false, reason: `ZIP ${zip || "unknown"} is not in watched list` };
+  }
+
+  // Check exclusions for this zip
+  const excluded = criteria.excluded.some((ex) => type.includes(ex));
+  if (excluded) {
+    return { matches: false, reason: `${listing.type} is excluded in ZIP ${zip}` };
+  }
+
+  // Evaluate each rule
+  for (const rule of criteria.rules) {
+    if (rule.type === "any") {
+      if (price < rule.maxPrice) {
+        return { matches: true, reason: `${listing.type} in ${zip} at $${price.toLocaleString()} — under $${rule.maxPrice.toLocaleString()} limit` };
+      } else {
+        return { matches: false, reason: `$${price.toLocaleString()} exceeds $${rule.maxPrice.toLocaleString()} limit for ZIP ${zip}` };
+      }
+    }
+    if (type.includes(rule.type) && beds === rule.beds) {
+      if (price < rule.maxPrice) {
+        return { matches: true, reason: `${beds}BR ${listing.type} in ${zip} at $${price.toLocaleString()} — under $${rule.maxPrice.toLocaleString()} limit` };
+      } else {
+        return { matches: false, reason: `$${price.toLocaleString()} exceeds $${rule.maxPrice.toLocaleString()} limit for ${beds}BR ${listing.type} in ${zip}` };
+      }
+    }
+    // Handle 5BR+ for duplexes
+    if (type.includes(rule.type) && rule.beds === 5 && beds >= 5) {
+      if (price < rule.maxPrice) {
+        return { matches: true, reason: `${beds}BR ${listing.type} in ${zip} at $${price.toLocaleString()} — under $${rule.maxPrice.toLocaleString()} limit` };
+      } else {
+        return { matches: false, reason: `$${price.toLocaleString()} exceeds $${rule.maxPrice.toLocaleString()} limit for ${beds}BR ${listing.type} in ${zip}` };
+      }
+    }
+  }
+
+  return { matches: false, reason: `No matching rule for ${beds}BR ${listing.type} in ZIP ${zip}` };
+}
+
+async function analyzeListing(subject, body) {
+  const listing = await extractListing(subject, body);
+  const evaluation = evaluateListing(listing);
+  return { ...listing, ...evaluation };
 }
 
 async function sendTelegram(listing) {
