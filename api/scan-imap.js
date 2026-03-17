@@ -41,12 +41,14 @@ export default async function handler(req, res) {
           const isListing =
             senderLower.includes("zillow") &&
             (subjectLower.includes("new listing") || subjectLower.includes("price cut"));
+          const isTrauma = subjectLower.includes("trauma dashboard");
 
           emails.push({
             id: String(msg.uid),
             subject: msg.envelope.subject || "(no subject)",
             sender,
-            category: isListing ? "listing" : "inbox",
+            date: msg.envelope.date ? new Date(msg.envelope.date).toISOString() : null,
+            category: isTrauma ? "trauma" : isListing ? "listing" : "inbox",
             source: "imap",
             account: process.env.HOSTINGER_EMAIL,
             unread: !msg.flags.has("\\Seen"),

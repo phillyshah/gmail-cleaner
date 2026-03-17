@@ -351,6 +351,8 @@ export default function GmailCleaner() {
   const [selectedAccounts, setSelectedAccounts] = useState([]); // which accounts to scan
   const [listingPhase, setListingPhase] = useState("idle"); // idle | processing | done
   const [listingResults, setListingResults] = useState([]);
+  const [traumaPhase, setTraumaPhase] = useState("idle"); // idle | processing | done
+  const [traumaResults, setTraumaResults] = useState([]);
   const logRef = useRef(null);
 
   const addLog = useCallback((msg) => {
@@ -376,12 +378,12 @@ export default function GmailCleaner() {
     );
   };
 
-  const { reviewEmails, safeEmails, listingEmails, trashCountMap } = useMemo(() => {
+  const { reviewEmails, safeEmails, listingEmails, traumaEmails, trashCountMap } = useMemo(() => {
     const prefs = loadPrefs();
     const safeSet = new Set(prefs.safe);
     const trashCounts = prefs.trash || {};
     const countMap = {};
-    const safe = [], review = [], listings = [];
+    const safe = [], review = [], listings = [], trauma = [];
     emails.forEach((e) => {
       const addr = extractEmail(e.sender);
       countMap[e.id] = trashCounts[addr] || 0;
@@ -389,12 +391,14 @@ export default function GmailCleaner() {
       const isListing =
         addr.includes("zillow") &&
         (subjectLower.includes("new listing") || subjectLower.includes("price cut"));
-      if (isListing) listings.push(e);
+      const isTrauma = subjectLower.includes("trauma dashboard") || e.category === "trauma";
+      if (isTrauma) trauma.push(e);
+      else if (isListing) listings.push(e);
       else if (safeSet.has(addr)) safe.push(e);
       else review.push(e);
     });
     review.sort((a, b) => (countMap[b.id] || 0) - (countMap[a.id] || 0));
-    return { reviewEmails: review, safeEmails: safe, listingEmails: listings, trashCountMap: countMap };
+    return { reviewEmails: review, safeEmails: safe, listingEmails: listings, traumaEmails: trauma, trashCountMap: countMap };
   }, [emails]);
 
   const handleScan = async () => {
@@ -568,7 +572,39 @@ export default function GmailCleaner() {
     addLog(`Listings done: ${notified} matched (Telegram sent), ${trashed} trashed.`);
     setListingResults(allResults);
     setListingPhase("done");
-    // Remove processed listings from emails list
+    // Remove all processed listing emails (all Zillow emails go to trash after analysis)
+    const processedIds = new Set(allResults.map((r) => r.id));
+    setEmails((prev) => prev.filter((e) => !processedIds.has(e.id)));
+  };
+
+  const processTrauma = async () => {
+    if (!traumaEmails.length) return;
+    setTraumaPhase("processing");
+    addLog(`Processing ${traumaEmails.length} trauma dashboard email${traumaEmails.length > 1 ? "s" : ""}…`);
+
+    // Separate by source
+    const imapTrauma = traumaEmails.filter((e) => e.source === "imap");
+    const allResults = [];
+
+    if (imapTrauma.length > 0) {
+      try {
+        const res = await fetch("/api/process-trauma", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ emails: imapTrauma }),
+        });
+        const data = await res.json();
+        allResults.push(...(data.results || []));
+      } catch (err) {
+        addLog(`Trauma processing error: ${err.message}`);
+      }
+    }
+
+    const notified = allResults.filter((r) => r.action === "notified").length;
+    const errors = allResults.filter((r) => r.action === "error").length;
+    addLog(`Trauma done: ${notified} sent to Telegram${errors ? `, ${errors} errors` : ""}.`);
+    setTraumaResults(allResults);
+    setTraumaPhase("done");
     const processedIds = new Set(allResults.map((r) => r.id));
     setEmails((prev) => prev.filter((e) => !processedIds.has(e.id)));
   };
@@ -581,6 +617,8 @@ export default function GmailCleaner() {
     setLogs([]);
     setListingPhase("idle");
     setListingResults([]);
+    setTraumaPhase("idle");
+    setTraumaResults([]);
   };
 
   const total = emails.length;
@@ -725,6 +763,47 @@ export default function GmailCleaner() {
                     {listingPhase === "processing" ? <><Spinner /> Analyzing…</> : `Analyze ${listingEmails.length} Listing${listingEmails.length > 1 ? "s" : ""}`}
                   </button>
                 </div>
+              </div>
+            )}
+
+            {traumaEmails.length > 0 && traumaPhase !== "done" && (
+              <div className="iz-card" style={{ borderLeft: "3px solid #0a84ff" }}>
+                <div className="iz-section-hdr" style={{ color: "#0a84ff" }}>
+                  📊 Trauma Dashboard — {traumaEmails.length}
+                </div>
+                {traumaEmails.map((e) => (
+                  <div key={e.id} style={{ display: "flex", alignItems: "center", padding: "10px 16px", gap: 12, borderBottom: "1px solid rgba(84,84,88,0.3)" }}>
+                    <div className="iz-row-info">
+                      <div className="iz-row-sender">{e.subject}</div>
+                      <div className="iz-row-subject">{e.date ? new Date(e.date).toLocaleDateString() : e.sender}</div>
+                    </div>
+                    <span className="iz-pill" style={{ background: "rgba(10,132,255,0.15)", color: "#0a84ff" }}>xlsx</span>
+                  </div>
+                ))}
+                <div style={{ padding: "12px 16px" }}>
+                  <button className="iz-btn iz-btn-primary" onClick={processTrauma}
+                    disabled={traumaPhase === "processing"} style={{ fontSize: 14 }}>
+                    {traumaPhase === "processing" ? <><Spinner /> Processing…</> : `Process ${traumaEmails.length} Dashboard${traumaEmails.length > 1 ? "s" : ""}`}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {traumaPhase === "done" && traumaResults.length > 0 && (
+              <div className="iz-card" style={{ padding: "16px" }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#0a84ff", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 10 }}>
+                  📊 Trauma Processed
+                </div>
+                {traumaResults.map((r, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", borderBottom: "1px solid rgba(84,84,88,0.2)" }}>
+                    <span style={{ fontSize: 16 }}>{r.action === "notified" ? "✅" : "❌"}</span>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: r.action === "notified" ? "#30d158" : "#ff453a" }}>
+                        {r.action === "notified" ? `${r.amount} as of ${r.date}` : r.error}
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
 

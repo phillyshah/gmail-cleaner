@@ -71,6 +71,141 @@ async function getAccessToken(refreshToken) {
   return data.access_token || null;
 }
 
+// -- IMAP helpers --
+import { ImapFlow } from "imapflow";
+import * as XLSX from "xlsx";
+
+function imapClient() {
+  return new ImapFlow({
+    host: process.env.HOSTINGER_IMAP_HOST || "imap.hostinger.com",
+    port: 993, secure: true,
+    auth: { user: process.env.HOSTINGER_EMAIL, pass: process.env.HOSTINGER_PASSWORD },
+    logger: false, tls: { rejectUnauthorized: false },
+  });
+}
+
+async function scanImap() {
+  const client = imapClient();
+  const emails = [];
+  try {
+    await client.connect();
+    const lock = await client.getMailboxLock("INBOX");
+    try {
+      const since = new Date(); since.setDate(since.getDate() - 30);
+      const uids = await client.search({ since }, { uid: true });
+      if (uids.length) {
+        for await (const msg of client.fetch(uids.slice(-50).reverse(), { envelope: true, flags: true }, { uid: true })) {
+          const from = msg.envelope.from?.[0];
+          const sender = from ? `${from.name ? from.name + " " : ""}<${from.address}>` : "Unknown";
+          const sub = (msg.envelope.subject || "").toLowerCase();
+          const snd = sender.toLowerCase();
+          const category = sub.includes("trauma dashboard") ? "trauma"
+            : (snd.includes("zillow") && (sub.includes("new listing") || sub.includes("price cut"))) ? "listing"
+            : "inbox";
+          emails.push({
+            id: String(msg.uid), subject: msg.envelope.subject || "(no subject)",
+            sender, date: msg.envelope.date ? new Date(msg.envelope.date).toISOString() : null,
+            category, source: "imap",
+          });
+        }
+      }
+    } finally { lock.release(); }
+    await client.logout();
+  } catch {}
+  return emails;
+}
+
+async function trashImapEmails(uids) {
+  const client = imapClient();
+  try {
+    await client.connect();
+    const lock = await client.getMailboxLock("INBOX");
+    try {
+      await client.messageFlagsAdd(uids, ["\\Seen"], { uid: true });
+      const mailboxes = await client.list();
+      const trash = mailboxes.find((m) => m.specialUse === "\\Trash" || /trash|deleted/i.test(m.name));
+      if (trash) await client.messageMove(uids, trash.path, { uid: true });
+      else await client.messageFlagsAdd(uids, ["\\Deleted"], { uid: true });
+    } finally { lock.release(); }
+    await client.logout();
+  } catch {}
+}
+
+async function processImapListing(email) {
+  // Reuse Gmail listing logic but for IMAP — just evaluate subject/sender heuristically
+  // For full body analysis, fetch the email
+  const client = imapClient();
+  let body = email.subject;
+  try {
+    await client.connect();
+    const lock = await client.getMailboxLock("INBOX");
+    try {
+      for await (const msg of client.fetch([email.id], { bodyParts: ["TEXT"] }, { uid: true })) {
+        const part = msg.bodyParts?.get("text");
+        if (part) body = part.toString();
+      }
+      await client.messageFlagsAdd([email.id], ["\\Seen"], { uid: true });
+    } finally { lock.release(); }
+    await client.logout();
+  } catch {}
+  // Use the same processListing logic from the webhook (already defined below)
+  return processListing({ ...email }, null, body);
+}
+
+function findExcelPart(struct) {
+  if (!struct) return null;
+  const mime = `${struct.type || ""}/${struct.subtype || ""}`.toLowerCase();
+  const name = (struct.parameters?.name || struct.disposition?.parameters?.filename || "").toLowerCase();
+  if (struct.part && (mime.includes("sheet") || mime.includes("excel") || (mime === "application/octet-stream" && name.match(/\.xlsx?$/)))) return struct.part;
+  if (struct.childNodes) { for (const c of struct.childNodes) { const f = findExcelPart(c); if (f) return f; } }
+  return null;
+}
+
+async function processTraumaEmail(email) {
+  const client = imapClient();
+  try {
+    await client.connect();
+    const lock = await client.getMailboxLock("INBOX");
+    let buffer = null; let emailDate = email.date ? new Date(email.date) : new Date();
+    try {
+      for await (const msg of client.fetch([email.id], { envelope: true, bodyStructure: true }, { uid: true })) {
+        emailDate = msg.envelope.date || emailDate;
+        const part = findExcelPart(msg.bodyStructure);
+        if (part) {
+          const dl = await client.download(email.id, part, { uid: true });
+          const chunks = []; for await (const chunk of dl.content) chunks.push(chunk);
+          buffer = Buffer.concat(chunks);
+        }
+      }
+      await client.messageFlagsAdd([email.id], ["\\Seen"], { uid: true });
+    } finally { lock.release(); }
+    await client.logout();
+
+    if (!buffer) { await tg(`⚠️ No Excel attachment found in trauma dashboard email`); return; }
+
+    const workbook = XLSX.read(buffer, { type: "buffer" });
+    const month = new Date(emailDate).toLocaleString("en-US", { month: "long", year: "numeric" });
+    const sheetsText = workbook.SheetNames.map((n) => `=== ${n} ===\n${XLSX.utils.sheet_to_csv(workbook.Sheets[n])}`).join("\n\n").substring(0, 10000);
+
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001", max_tokens: 256,
+        messages: [{ role: "user", content: `Find the "Revenue by Product Type" table and extract the Grand Total for ${month}.\n\n${sheetsText}\n\nRespond ONLY with JSON: {"amount": 123456.78, "formatted": "$123,456", "found": true}` }],
+      }),
+    });
+    const data = await res.json();
+    const text = data.content?.[0]?.text || "{}";
+    const parsed = JSON.parse(text.substring(text.indexOf("{"), text.lastIndexOf("}") + 1));
+    const dateStr = new Date(emailDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+    if (parsed.found) await tg(`📊 MH Trauma sales as of ${dateStr} are ${parsed.formatted}`);
+    else await tg(`⚠️ Could not find Revenue by Product Type for ${month}`);
+  } catch (err) {
+    await tg(`⚠️ Trauma processing error: ${err.message}`);
+  }
+}
+
 async function scanGmail(accessToken) {
   const base = "https://gmail.googleapis.com/gmail/v1/users/me";
   const headers = { Authorization: `Bearer ${accessToken}` };
@@ -264,7 +399,7 @@ export default async function handler(req, res) {
     return res.json({ ok: true });
   }
 
-  let totalTrashed = 0, totalNotified = 0, totalListingsTrashed = 0;
+  let totalTrashed = 0, totalNotified = 0, totalListingsTrashed = 0, totalTrauma = 0;
 
   for (const account of accounts) {
     const token = await getAccessToken(account.refreshToken);
@@ -285,13 +420,11 @@ export default async function handler(req, res) {
     const listings = emails.filter(isListing);
     const regular = emails.filter((e) => !isListing(e));
 
-    // Trash regular promo/social
     if (regular.length) {
       await trashEmails(token, regular.map((e) => e.id));
       totalTrashed += regular.length;
     }
 
-    // Process Zillow listings
     for (const listing of listings) {
       const action = await processListing(listing, token);
       if (action === "notified") totalNotified++;
@@ -299,11 +432,38 @@ export default async function handler(req, res) {
     }
   }
 
+  // Scan IMAP account (Hostinger)
+  await tg(`📬 Scanning ${process.env.HOSTINGER_EMAIL}...`);
+  const imapEmails = await scanImap();
+  const imapListings = imapEmails.filter((e) => e.category === "listing");
+  const imapTrauma = imapEmails.filter((e) => e.category === "trauma");
+  const imapRegular = imapEmails.filter((e) => e.category === "inbox");
+
+  // Trash regular IMAP inbox emails
+  if (imapRegular.length) {
+    await trashImapEmails(imapRegular.map((e) => e.id));
+    totalTrashed += imapRegular.length;
+  }
+
+  // Process IMAP Zillow listings
+  for (const listing of imapListings) {
+    const action = await processImapListing(listing);
+    if (action === "notified") totalNotified++;
+    else totalListingsTrashed++;
+  }
+
+  // Process trauma dashboard emails
+  for (const email of imapTrauma) {
+    await processTraumaEmail(email);
+    totalTrauma++;
+  }
+
   const summary =
     `✅ *Cleanup complete!*\n\n` +
-    `🗑 ${totalTrashed} promo/social emails trashed\n` +
-    `🏠 ${totalNotified} listings matched & Telegram sent\n` +
-    `🗑 ${totalListingsTrashed} listings trashed (no match)`;
+    `🗑 ${totalTrashed} emails trashed\n` +
+    `🏠 ${totalNotified} listings matched & sent\n` +
+    `🗑 ${totalListingsTrashed} listings trashed\n` +
+    `📊 ${totalTrauma} trauma dashboard${totalTrauma !== 1 ? "s" : ""} processed`;
   await tg(summary);
   res.json({ ok: true });
 }
