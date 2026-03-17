@@ -213,6 +213,12 @@ async function callClaude(prompt, useMcp = true) {
   });
 
   const data = await res.json();
+
+  // Surface API-level errors (auth failures, bad params, etc.)
+  if (data.error) {
+    return { error: true, summary: `API error: ${data.error.message || JSON.stringify(data.error)}` };
+  }
+
   const texts = (data.content || [])
     .filter(b => b.type === "text")
     .map(b => b.text);
@@ -228,7 +234,7 @@ async function callClaude(prompt, useMcp = true) {
   } catch (e) {
     // ignore parse errors
   }
-  return { raw: full, error: true, summary: "Could not parse response" };
+  return { raw: full, error: true, summary: `Could not parse response: ${full.slice(0, 200)}` };
 }
 
 export default function GmailCleaner() {
