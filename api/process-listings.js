@@ -148,6 +148,14 @@ async function sendTelegram(listing) {
   });
 }
 
+async function markAsRead(id, accessToken) {
+  await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}/modify`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ removeLabelIds: ["UNREAD"] }),
+  });
+}
+
 async function trashEmail(id, accessToken) {
   await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}/trash`, {
     method: "POST",
@@ -173,6 +181,7 @@ export default async function handler(req, res) {
       const body = extractBody(full);
       const analysis = await analyzeListing(email.subject, body);
 
+      await markAsRead(email.id, accessToken);
       if (analysis.matches) {
         await sendTelegram(analysis);
         results.push({ id: email.id, action: "notified", ...analysis });
