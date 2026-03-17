@@ -90,9 +90,14 @@ async function extractListing(subject, body) {
 Subject: ${subject}
 Body: ${body.substring(0, 4000)}
 
+Rules:
+- "address" must be the full street address of THIS specific property including its ZIP code
+- "zip" must be extracted from that property's street address only — not from any other part of the email
+- "url" should be the direct Zillow property link if present
+
 {
-  "address": "full address",
-  "zip": "5-digit zip code only",
+  "address": "full street address including zip, e.g. 123 Main St, Pittsburgh, PA 15228",
+  "zip": "5-digit zip from the property address only",
   "type": "single family / duplex / condo / townhome / lot / land / other",
   "beds": 3,
   "price": 185000,
@@ -124,8 +129,16 @@ Body: ${body.substring(0, 4000)}
   }
 }
 
+function extractZipFromAddress(address) {
+  // Pull ZIP directly from the address string — trust this over Claude's zip field
+  const match = (address || "").match(/\b(\d{5})\b/g);
+  // Return the last 5-digit number in the address (ZIP is always at the end)
+  return match ? match[match.length - 1] : null;
+}
+
 function evaluateListing(listing) {
-  const zip = (listing.zip || "").trim();
+  // Always derive ZIP from the address string — never trust Claude's zip field alone
+  const zip = extractZipFromAddress(listing.address) || (listing.zip || "").trim();
   const type = (listing.type || "").toLowerCase();
   const beds = Number(listing.beds) || 0;
   const price = Number(listing.price) || 0;
