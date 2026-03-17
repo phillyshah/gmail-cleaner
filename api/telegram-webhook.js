@@ -246,6 +246,19 @@ export default async function handler(req, res) {
   if (String(message.chat.id) !== process.env.TELEGRAM_CHAT_ID) return res.json({ ok: true });
 
   const cmd = message.text.trim().split(" ")[0].toLowerCase();
+
+  if (cmd === "/test") {
+    const accounts = (await redis.get("gmail_accounts")) || [];
+    await tg(
+      `🔧 *Debug Info*\n\n` +
+      `Chat ID received: \`${message.chat.id}\`\n` +
+      `TELEGRAM_CHAT_ID env: \`${process.env.TELEGRAM_CHAT_ID}\`\n` +
+      `Redis accounts: ${accounts.length} stored\n` +
+      (accounts.length ? accounts.map((a) => `• ${a.email}`).join("\n") : "_(none)_")
+    );
+    return res.json({ ok: true });
+  }
+
   if (cmd !== "/clean") return res.json({ ok: true });
 
   await tg("🧹 Starting cleanup...");
