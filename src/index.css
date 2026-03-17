@@ -42,6 +42,7 @@ body { margin: 0; }
   transition: all 0.15s ease;
 }
 .iz-check.on-trash { background: #ff453a; border-color: #ff453a; }
+.iz-check.on-spam  { background: #ff9f0a; border-color: #ff9f0a; }
 .iz-check.on-safe  { border-color: rgba(52,211,100,0.6); }
 
 .iz-row-info { flex: 1; min-width: 0; }

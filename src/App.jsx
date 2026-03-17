@@ -4,15 +4,17 @@ const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const SCOPES = "https://www.googleapis.com/auth/gmail.modify";
 const PREFS_KEY = "inbox-zero-prefs";
 const ACCOUNTS_KEY = "gmail_accounts";
-const AUTO_TRASH_THRESHOLD = 3;
+const AUTO_SPAM_THRESHOLD = 3; // auto-spam after being trashed this many times
 const IMAP_ACCOUNT = "andybot@phillyshah.com";
 
 // -- Prefs --
 function loadPrefs() {
   try {
-    return JSON.parse(localStorage.getItem(PREFS_KEY) || '{"safe":[],"trash":{}}');
+    const raw = JSON.parse(localStorage.getItem(PREFS_KEY) || '{"safe":[],"trash":{},"spam":[]}');
+    if (!raw.spam) raw.spam = [];
+    return raw;
   } catch {
-    return { safe: [], trash: {} };
+    return { safe: [], trash: {}, spam: [] };
   }
 }
 
@@ -21,21 +23,35 @@ function extractEmail(sender) {
   return (m ? m[1] : sender).toLowerCase().trim();
 }
 
-function applyChoices(keptEmails, trashedEmails) {
+function applyActions(keepEmails, trashEmails, spamEmails) {
   const prefs = loadPrefs();
   const safeSet = new Set(prefs.safe);
   const trashCounts = { ...prefs.trash };
-  keptEmails.forEach((e) => {
+  const spamSet = new Set(prefs.spam);
+
+  keepEmails.forEach((e) => {
     const addr = extractEmail(e.sender);
     safeSet.add(addr);
+    spamSet.delete(addr);
     delete trashCounts[addr];
   });
-  trashedEmails.forEach((e) => {
+  trashEmails.forEach((e) => {
     const addr = extractEmail(e.sender);
     safeSet.delete(addr);
     trashCounts[addr] = (trashCounts[addr] || 0) + 1;
   });
-  localStorage.setItem(PREFS_KEY, JSON.stringify({ safe: [...safeSet], trash: trashCounts }));
+  spamEmails.forEach((e) => {
+    const addr = extractEmail(e.sender);
+    safeSet.delete(addr);
+    spamSet.add(addr);
+    delete trashCounts[addr];
+  });
+
+  localStorage.setItem(PREFS_KEY, JSON.stringify({
+    safe: [...safeSet],
+    trash: trashCounts,
+    spam: [...spamSet],
+  }));
 }
 
 // -- Multi-account storage --
@@ -189,15 +205,32 @@ function CheckIcon({ color = "#fff" }) {
   );
 }
 
-function EmailRow({ email, checked, onToggle, trashCount, isSafe, showAccount }) {
+function BanIcon({ color = "#fff" }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+      <circle cx="6" cy="6" r="4.5" stroke={color} strokeWidth="1.5"/>
+      <line x1="3" y1="3" x2="9" y2="9" stroke={color} strokeWidth="1.5" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
+// action: "trash" | "spam" | "keep"
+const ACTION_CYCLE = ["trash", "spam", "keep"];
+
+function EmailRow({ email, action, onCycle, trashCount, showAccount }) {
   const name = email.sender.replace(/<[^>]+>/, "").replace(/"/g, "").trim() || extractEmail(email.sender);
   const accountLabel = email.account ? email.account.split("@")[0] : null;
 
+  const checkClass = action === "trash" ? " on-trash"
+    : action === "spam" ? " on-spam"
+    : action === "keep" ? " on-safe" : "";
+
   return (
-    <div className="iz-card-row" onClick={onToggle} role="checkbox" aria-checked={checked}>
-      <div className={`iz-check${checked ? " on-trash" : (isSafe ? " on-safe" : "")}`}>
-        {checked && <CheckIcon />}
-        {!checked && isSafe && <CheckIcon color="#30d158" />}
+    <div className="iz-card-row" onClick={onCycle} role="button">
+      <div className={`iz-check${checkClass}`}>
+        {action === "trash" && <CheckIcon />}
+        {action === "spam" && <BanIcon />}
+        {action === "keep" && <CheckIcon color="#30d158" />}
       </div>
       <div className="iz-row-info">
         <div className="iz-row-sender">{name}</div>
@@ -206,11 +239,66 @@ function EmailRow({ email, checked, onToggle, trashCount, isSafe, showAccount })
       <div className="iz-row-meta">
         <span className={`iz-pill iz-pill-${email.category}`}>{email.category}</span>
         {showAccount && accountLabel && <span className="iz-pill-account">{accountLabel}</span>}
-        {trashCount >= AUTO_TRASH_THRESHOLD && <span style={{ fontSize: 10, color: "#ff9f0a" }}>×{trashCount}</span>}
-        {isSafe && !checked && <span style={{ fontSize: 10, color: "#30d158" }}>safe</span>}
+        {action === "trash" && <span style={{ fontSize: 10, color: "#ff453a", fontWeight: 600 }}>trash</span>}
+        {action === "spam" && <span style={{ fontSize: 10, color: "#ff9f0a", fontWeight: 600 }}>spam</span>}
+        {action === "keep" && <span style={{ fontSize: 10, color: "#30d158", fontWeight: 600 }}>keep</span>}
+        {trashCount >= 2 && <span style={{ fontSize: 10, color: "#8e8e93" }}>x{trashCount}</span>}
       </div>
     </div>
   );
+}
+
+// -- Helpers for auto-spam during scan --
+async function executeAutoSpam(autoSpamEmails, accounts, addLog) {
+  if (!autoSpamEmails.length) return 0;
+  addLog(`Auto-spamming ${autoSpamEmails.length} known spam senders…`);
+
+  const imapEmails = autoSpamEmails.filter((e) => e.source === "imap");
+  const gmailEmails = autoSpamEmails.filter((e) => e.source !== "imap");
+
+  const promises = [];
+  let done = 0;
+
+  if (imapEmails.length) {
+    promises.push(
+      fetch("/api/spam-imap", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uids: imapEmails.map((e) => e.id) }),
+      })
+        .then((r) => r.json())
+        .then((r) => { done += r.marked || imapEmails.length; })
+        .catch(() => {})
+    );
+  }
+
+  const byAccount = {};
+  gmailEmails.forEach((e) => {
+    if (!byAccount[e.account]) byAccount[e.account] = [];
+    byAccount[e.account].push(e.id);
+  });
+
+  for (const [accountEmail, ids] of Object.entries(byAccount)) {
+    const account = accounts.find((a) => a.email === accountEmail);
+    if (!account) continue;
+    promises.push(
+      (async () => {
+        const token = await getValidToken(account);
+        if (!token) return;
+        const res = await fetch("/api/spam", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accessToken: token, ids }),
+        });
+        const result = await res.json();
+        done += result.marked || ids.length;
+      })()
+    );
+  }
+
+  await Promise.all(promises);
+  addLog(`Auto-spammed ${done} emails.`);
+  return done;
 }
 
 // -- Main --
@@ -218,7 +306,8 @@ export default function GmailCleaner() {
   const { accounts, addAccount, removeAccount, initializing } = useGoogleAccounts();
   const [phase, setPhase] = useState("idle");
   const [emails, setEmails] = useState([]);
-  const [selected, setSelected] = useState(new Set());
+  // Map<id, "trash"|"spam"|"keep"> — per-email action
+  const [actions, setActions] = useState(new Map());
   const [cleanResult, setCleanResult] = useState(null);
   const [logs, setLogs] = useState([]);
   const [selectedAccounts, setSelectedAccounts] = useState([]);
@@ -226,6 +315,7 @@ export default function GmailCleaner() {
   const [listingResults, setListingResults] = useState([]);
   const [traumaPhase, setTraumaPhase] = useState("idle");
   const [traumaResults, setTraumaResults] = useState([]);
+  const [autoSpamCount, setAutoSpamCount] = useState(0);
   const logRef = useRef(null);
 
   const addLog = useCallback((msg) => {
@@ -248,12 +338,11 @@ export default function GmailCleaner() {
     );
   };
 
-  const { reviewEmails, safeEmails, listingEmails, traumaEmails, trashCountMap } = useMemo(() => {
+  const { reviewEmails, listingEmails, traumaEmails, trashCountMap } = useMemo(() => {
     const prefs = loadPrefs();
-    const safeSet = new Set(prefs.safe);
     const trashCounts = prefs.trash || {};
     const countMap = {};
-    const safe = [], review = [], listings = [], trauma = [];
+    const review = [], listings = [], trauma = [];
     emails.forEach((e) => {
       const addr = extractEmail(e.sender);
       countMap[e.id] = trashCounts[addr] || 0;
@@ -264,21 +353,39 @@ export default function GmailCleaner() {
       const isTrauma = subjectLower.includes("trauma dashboard") || e.category === "trauma";
       if (isTrauma) trauma.push(e);
       else if (isListing) listings.push(e);
-      else if (safeSet.has(addr)) safe.push(e);
       else review.push(e);
     });
-    review.sort((a, b) => (countMap[b.id] || 0) - (countMap[a.id] || 0));
-    return { reviewEmails: review, safeEmails: safe, listingEmails: listings, traumaEmails: trauma, trashCountMap: countMap };
-  }, [emails]);
+    // Sort: spam-action first, then trash, then keep
+    review.sort((a, b) => {
+      const order = { spam: 0, trash: 1, keep: 2 };
+      const aAction = actions.get(a.id) || "trash";
+      const bAction = actions.get(b.id) || "trash";
+      if (aAction !== bAction) return (order[aAction] || 1) - (order[bAction] || 1);
+      return (countMap[b.id] || 0) - (countMap[a.id] || 0);
+    });
+    return { reviewEmails: review, listingEmails: listings, traumaEmails: trauma, trashCountMap: countMap };
+  }, [emails, actions]);
+
+  // Computed counts
+  const actionCounts = useMemo(() => {
+    let trash = 0, spam = 0, keep = 0;
+    for (const [, action] of actions) {
+      if (action === "trash") trash++;
+      else if (action === "spam") spam++;
+      else if (action === "keep") keep++;
+    }
+    return { trash, spam, keep };
+  }, [actions]);
 
   const handleScan = async () => {
     setPhase("scanning");
     setEmails([]);
     setCleanResult(null);
     setLogs([]);
+    setAutoSpamCount(0);
 
     const toScan = accounts.filter((a) => selectedAccounts.includes(a.email));
-    const scanImap = selectedAccounts.includes(IMAP_ACCOUNT);
+    const scanImapEnabled = selectedAccounts.includes(IMAP_ACCOUNT);
 
     // Scan all accounts + IMAP in parallel
     const scanPromises = toScan.map(async (account) => {
@@ -304,7 +411,7 @@ export default function GmailCleaner() {
       }
     });
 
-    if (scanImap) {
+    if (scanImapEnabled) {
       addLog(`Scanning ${IMAP_ACCOUNT} (IMAP)…`);
       scanPromises.push(
         fetch("/api/scan-imap", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
@@ -321,97 +428,140 @@ export default function GmailCleaner() {
     const results = await Promise.all(scanPromises);
     const all = results.flat();
 
-    const safeSet = new Set(loadPrefs().safe);
-    const initSelected = new Set(all.filter((e) => !safeSet.has(extractEmail(e.sender))).map((e) => e.id));
-    setEmails(all);
-    setSelected(initSelected);
+    // Categorize: auto-spam known spam senders + high-trash-count senders
+    const prefs = loadPrefs();
+    const safeSet = new Set(prefs.safe);
+    const spamSet = new Set(prefs.spam);
+    const trashCounts = prefs.trash || {};
+
+    const autoSpam = [];
+    const remaining = [];
+
+    for (const e of all) {
+      const addr = extractEmail(e.sender);
+      if (spamSet.has(addr) || trashCounts[addr] >= AUTO_SPAM_THRESHOLD) {
+        autoSpam.push(e);
+      } else {
+        remaining.push(e);
+      }
+    }
+
+    // Auto-spam known spam senders immediately
+    const spammed = await executeAutoSpam(autoSpam, accounts, addLog);
+    setAutoSpamCount(spammed);
+
+    // Set initial per-email actions for remaining emails
+    const initActions = new Map();
+    for (const e of remaining) {
+      const addr = extractEmail(e.sender);
+      if (safeSet.has(addr)) {
+        initActions.set(e.id, "keep");
+      } else {
+        // Default unknown senders to trash
+        initActions.set(e.id, "trash");
+      }
+    }
+
+    setEmails(remaining);
+    setActions(initActions);
     setPhase("review");
   };
 
-  const toggleEmail = (id) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+  const cycleAction = (id) => {
+    setActions((prev) => {
+      const next = new Map(prev);
+      const current = next.get(id) || "trash";
+      const idx = ACTION_CYCLE.indexOf(current);
+      next.set(id, ACTION_CYCLE[(idx + 1) % ACTION_CYCLE.length]);
       return next;
     });
   };
 
-  const toggleAll = (list) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      const allOn = list.every((e) => prev.has(e.id));
-      list.forEach((e) => (allOn ? next.delete(e.id) : next.add(e.id)));
+  const setAllTo = (list, action) => {
+    setActions((prev) => {
+      const next = new Map(prev);
+      list.forEach((e) => next.set(e.id, action));
       return next;
     });
   };
 
-  const executeAction = async (action) => {
-    const toAct = emails.filter((e) => selected.has(e.id));
-    const toKeep = emails.filter((e) => !selected.has(e.id));
-    if (toAct.length === 0) {
-      applyChoices(toKeep, []);
-      setCleanResult({ count: 0, kept: toKeep.length, action });
+  const executeActions = async () => {
+    const toTrash = emails.filter((e) => actions.get(e.id) === "trash");
+    const toSpam = emails.filter((e) => actions.get(e.id) === "spam");
+    const toKeep = emails.filter((e) => actions.get(e.id) === "keep");
+
+    if (toTrash.length === 0 && toSpam.length === 0) {
+      applyActions(toKeep, [], []);
+      setCleanResult({ trashed: 0, spammed: 0, kept: toKeep.length });
       setPhase("done");
       return;
     }
 
     setPhase("cleaning");
-    addLog(`${action === "spam" ? "Marking spam" : "Trashing"} ${toAct.length} messages…`);
-
-    let totalDone = 0;
-    const imapEmails = toAct.filter((e) => e.source === "imap");
-    const gmailEmails = toAct.filter((e) => e.source !== "imap");
-
-    // Process IMAP and Gmail in parallel
     const promises = [];
+    let totalTrashed = 0, totalSpammed = 0;
 
-    if (imapEmails.length > 0) {
-      const endpoint = action === "spam" ? "/api/spam-imap" : "/api/trash-imap";
-      promises.push(
-        fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ uids: imapEmails.map((e) => e.id) }),
-        })
-          .then((r) => r.json())
-          .then((result) => { totalDone += result.deleted || result.marked || imapEmails.length; })
-          .catch((err) => addLog(`IMAP error: ${err.message}`))
-      );
-    }
+    // Helper: send batch to endpoint
+    const sendBatch = async (emailList, endpointGmail, endpointImap, counterFn) => {
+      const imap = emailList.filter((e) => e.source === "imap");
+      const gmail = emailList.filter((e) => e.source !== "imap");
 
-    const byAccount = {};
-    gmailEmails.forEach((e) => {
-      if (!byAccount[e.account]) byAccount[e.account] = [];
-      byAccount[e.account].push(e.id);
-    });
+      if (imap.length) {
+        promises.push(
+          fetch(endpointImap, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ uids: imap.map((e) => e.id) }),
+          })
+            .then((r) => r.json())
+            .then((r) => counterFn(r.deleted || r.marked || imap.length))
+            .catch((err) => addLog(`IMAP error: ${err.message}`))
+        );
+      }
 
-    const gmailEndpoint = action === "spam" ? "/api/spam" : "/api/trash";
-    for (const [accountEmail, ids] of Object.entries(byAccount)) {
-      const account = accounts.find((a) => a.email === accountEmail);
-      if (!account) continue;
-      promises.push(
-        (async () => {
-          const token = await getValidToken(account);
-          if (!token) return;
-          try {
-            const res = await fetch(gmailEndpoint, {
+      const byAccount = {};
+      gmail.forEach((e) => {
+        if (!byAccount[e.account]) byAccount[e.account] = [];
+        byAccount[e.account].push(e.id);
+      });
+
+      for (const [accountEmail, ids] of Object.entries(byAccount)) {
+        const account = accounts.find((a) => a.email === accountEmail);
+        if (!account) continue;
+        promises.push(
+          (async () => {
+            const token = await getValidToken(account);
+            if (!token) return;
+            const res = await fetch(endpointGmail, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ accessToken: token, ids }),
             });
             const result = await res.json();
-            totalDone += result.deleted || result.marked || ids.length;
-          } catch (err) {
-            addLog(`Error (${accountEmail}): ${err.message}`);
-          }
-        })()
-      );
+            counterFn(result.deleted || result.marked || ids.length);
+          })()
+        );
+      }
+    };
+
+    if (toTrash.length) {
+      addLog(`Trashing ${toTrash.length} messages…`);
+      sendBatch(toTrash, "/api/trash", "/api/trash-imap", (n) => { totalTrashed += n; });
+    }
+    if (toSpam.length) {
+      addLog(`Marking ${toSpam.length} as spam…`);
+      sendBatch(toSpam, "/api/spam", "/api/spam-imap", (n) => { totalSpammed += n; });
     }
 
     await Promise.all(promises);
-    applyChoices(toKeep, toAct);
-    setCleanResult({ count: totalDone, kept: toKeep.length, action });
-    addLog(`Done. ${totalDone} ${action === "spam" ? "marked spam" : "trashed"}, ${toKeep.length} kept.`);
+    applyActions(toKeep, toTrash, toSpam);
+    setCleanResult({ trashed: totalTrashed, spammed: totalSpammed, kept: toKeep.length });
+
+    const parts = [];
+    if (totalTrashed) parts.push(`${totalTrashed} trashed`);
+    if (totalSpammed) parts.push(`${totalSpammed} spammed`);
+    if (toKeep.length) parts.push(`${toKeep.length} kept`);
+    addLog(`Done. ${parts.join(", ")}.`);
     setPhase("done");
   };
 
@@ -488,18 +638,17 @@ export default function GmailCleaner() {
   const reset = () => {
     setPhase("idle");
     setEmails([]);
-    setSelected(new Set());
+    setActions(new Map());
     setCleanResult(null);
     setLogs([]);
     setListingPhase("idle");
     setListingResults([]);
     setTraumaPhase("idle");
     setTraumaResults([]);
+    setAutoSpamCount(0);
   };
 
   const total = emails.length;
-  const selCount = selected.size;
-  const keptCount = total - selCount;
   const hasAccounts = accounts.length > 0;
   const showAccountBadge = accounts.length > 1;
 
@@ -597,18 +746,31 @@ export default function GmailCleaner() {
         {/* Review */}
         {phase === "review" && (
           <div style={{ animation: "slideUp 0.3s ease" }}>
+
+            {/* Auto-spam banner */}
+            {autoSpamCount > 0 && (
+              <div className="iz-card" style={{ padding: "14px 18px", marginBottom: 14, borderLeft: "3px solid #ff9f0a" }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "#ff9f0a" }}>
+                  Auto-spammed {autoSpamCount} known spam emails
+                </div>
+                <div style={{ fontSize: 12, color: "#8e8e93", marginTop: 4 }}>
+                  Senders previously marked as spam or trashed 3+ times.
+                </div>
+              </div>
+            )}
+
             <div className="iz-stats">
               <div className="iz-stat-box">
-                <div className="iz-stat-lbl">Found</div>
-                <div className="iz-stat-val">{total}</div>
+                <div className="iz-stat-lbl">Trash</div>
+                <div className="iz-stat-val" style={{ color: "#ff453a" }}>{actionCounts.trash}</div>
               </div>
               <div className="iz-stat-box">
-                <div className="iz-stat-lbl">Selected</div>
-                <div className="iz-stat-val" style={{ color: "#ff453a" }}>{selCount}</div>
+                <div className="iz-stat-lbl">Spam</div>
+                <div className="iz-stat-val" style={{ color: "#ff9f0a" }}>{actionCounts.spam}</div>
               </div>
               <div className="iz-stat-box">
-                <div className="iz-stat-lbl">Keeping</div>
-                <div className="iz-stat-val" style={{ color: "#30d158" }}>{keptCount}</div>
+                <div className="iz-stat-lbl">Keep</div>
+                <div className="iz-stat-val" style={{ color: "#30d158" }}>{actionCounts.keep}</div>
               </div>
             </div>
 
@@ -703,30 +865,19 @@ export default function GmailCleaner() {
               <div className="iz-card">
                 <div className="iz-section-hdr">
                   Review — {reviewEmails.length}
-                  <span className="iz-section-tap" onClick={() => toggleAll(reviewEmails)}>
-                    {reviewEmails.every((e) => selected.has(e.id)) ? "Deselect all" : "Select all"}
+                  <span style={{ display: "flex", gap: 12 }}>
+                    <span className="iz-section-tap" style={{ color: "#ff453a" }} onClick={() => setAllTo(reviewEmails, "trash")}>All trash</span>
+                    <span className="iz-section-tap" style={{ color: "#ff9f0a" }} onClick={() => setAllTo(reviewEmails, "spam")}>All spam</span>
+                    <span className="iz-section-tap" style={{ color: "#30d158" }} onClick={() => setAllTo(reviewEmails, "keep")}>All keep</span>
                   </span>
+                </div>
+                <div style={{ padding: "4px 18px 8px", fontSize: 12, color: "#6e6e80" }}>
+                  Tap each email to cycle: trash → spam → keep
                 </div>
                 {reviewEmails.map((e) => (
-                  <EmailRow key={e.id} email={e} checked={selected.has(e.id)}
-                    onToggle={() => toggleEmail(e.id)} trashCount={trashCountMap[e.id] || 0}
+                  <EmailRow key={e.id} email={e} action={actions.get(e.id) || "trash"}
+                    onCycle={() => cycleAction(e.id)} trashCount={trashCountMap[e.id] || 0}
                     showAccount={showAccountBadge} />
-                ))}
-              </div>
-            )}
-
-            {safeEmails.length > 0 && (
-              <div className="iz-card">
-                <div className="iz-section-hdr" style={{ color: "#30d158" }}>
-                  Remembered Safe — {safeEmails.length}
-                  <span className="iz-section-tap" onClick={() => toggleAll(safeEmails)}>
-                    {safeEmails.every((e) => selected.has(e.id)) ? "Deselect all" : "Select all"}
-                  </span>
-                </div>
-                {safeEmails.map((e) => (
-                  <EmailRow key={e.id} email={e} checked={selected.has(e.id)}
-                    onToggle={() => toggleEmail(e.id)} trashCount={trashCountMap[e.id] || 0}
-                    isSafe showAccount={showAccountBadge} />
                 ))}
               </div>
             )}
@@ -744,19 +895,16 @@ export default function GmailCleaner() {
         {/* Done */}
         {phase === "done" && cleanResult && (
           <div className="iz-card" style={{ padding: "24px 20px", animation: "slideUp 0.3s ease", textAlign: "center" }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>
-              {cleanResult.action === "spam" ? "🚫" : "🗑️"}
-            </div>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
             <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 6 }}>
-              {cleanResult.action === "spam"
-                ? `${cleanResult.count} marked as spam`
-                : `${cleanResult.count} moved to trash`}
+              Cleanup complete
             </div>
-            {cleanResult.kept > 0 && (
-              <div style={{ fontSize: 13, color: "#8e8e93" }}>
-                Remembered {cleanResult.kept} safe sender{cleanResult.kept !== 1 ? "s" : ""}.
-              </div>
-            )}
+            <div style={{ fontSize: 14, color: "#b0aec0", lineHeight: 1.8 }}>
+              {cleanResult.trashed > 0 && <div style={{ color: "#ff453a" }}>{cleanResult.trashed} trashed</div>}
+              {cleanResult.spammed > 0 && <div style={{ color: "#ff9f0a" }}>{cleanResult.spammed} spammed</div>}
+              {cleanResult.kept > 0 && <div style={{ color: "#30d158" }}>{cleanResult.kept} whitelisted</div>}
+              {autoSpamCount > 0 && <div style={{ color: "#8e8e93" }}>{autoSpamCount} auto-spammed</div>}
+            </div>
           </div>
         )}
 
@@ -778,26 +926,23 @@ export default function GmailCleaner() {
       {phase === "review" && (
         <div className="iz-sticky">
           <div className="iz-sticky-inner">
-            {selCount > 0 && (
-              <div style={{ display: "flex", gap: 8 }}>
-                <button className="iz-btn iz-btn-orange" onClick={() => executeAction("spam")} style={{ flex: 1, fontSize: 15 }}>
-                  Spam {selCount}
-                </button>
-                <button className="iz-btn iz-btn-red" onClick={() => executeAction("trash")} style={{ flex: 1, fontSize: 15 }}>
-                  Trash {selCount}
-                </button>
-              </div>
-            )}
-            <div style={{ display: "flex", gap: 8 }}>
-              {selCount === 0 && (
-                <button className="iz-btn iz-btn-green" onClick={() => executeAction("trash")} style={{ flex: 1, fontSize: 15 }}>
-                  Keep All
-                </button>
-              )}
-              <button className="iz-btn iz-btn-secondary" onClick={reset} style={{ flex: selCount === 0 ? "0 0 90px" : 1, fontSize: 15 }}>
-                Cancel
+            {(actionCounts.trash > 0 || actionCounts.spam > 0) && (
+              <button className="iz-btn iz-btn-primary" onClick={executeActions} style={{ fontSize: 15 }}>
+                Execute — {[
+                  actionCounts.trash > 0 && `${actionCounts.trash} trash`,
+                  actionCounts.spam > 0 && `${actionCounts.spam} spam`,
+                  actionCounts.keep > 0 && `${actionCounts.keep} keep`,
+                ].filter(Boolean).join(", ")}
               </button>
-            </div>
+            )}
+            {actionCounts.trash === 0 && actionCounts.spam === 0 && (
+              <button className="iz-btn iz-btn-green" onClick={executeActions} style={{ fontSize: 15 }}>
+                Keep All
+              </button>
+            )}
+            <button className="iz-btn iz-btn-secondary" onClick={reset} style={{ fontSize: 15 }}>
+              Cancel
+            </button>
           </div>
         </div>
       )}
