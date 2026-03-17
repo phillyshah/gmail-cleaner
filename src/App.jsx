@@ -5,6 +5,7 @@ const SCOPES = "https://www.googleapis.com/auth/gmail.modify";
 const PREFS_KEY = "inbox-zero-prefs";
 const ACCOUNTS_KEY = "gmail_accounts";
 const AUTO_TRASH_THRESHOLD = 3;
+const IMAP_ACCOUNT = "andybot@phillyshah.com";
 
 // -- Prefs --
 function loadPrefs() {
@@ -40,7 +41,6 @@ function applyChoices(keptEmails, trashedEmails) {
 // -- Multi-account storage --
 function loadAccounts() {
   try {
-    // Migrate from old single-account format
     const oldRefresh = localStorage.getItem("gmail_refresh_token");
     if (oldRefresh) {
       let accessToken = null, expiresAt = null;
@@ -78,8 +78,7 @@ async function getValidToken(account) {
       body: JSON.stringify({ refresh_token: account.refreshToken }),
     });
     const data = await res.json();
-    if (data.access_token) return data.access_token;
-    return null;
+    return data.access_token || null;
   } catch {
     return null;
   }
@@ -160,134 +159,7 @@ function useGoogleAccounts() {
   return { accounts, addAccount, removeAccount, initializing };
 }
 
-// -- CSS --
-const globalCSS = `
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes slideUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
-
-  *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  body { margin: 0; }
-
-  .iz-wrap {
-    min-height: 100vh;
-    background: #1a1a2e;
-    color: #f0eeee;
-    font-family: -apple-system, 'SF Pro Display', 'Inter', sans-serif;
-    -webkit-font-smoothing: antialiased;
-  }
-  .iz-container {
-    max-width: 480px;
-    margin: 0 auto;
-    padding: 60px 20px 180px;
-  }
-  @media (min-width: 600px) {
-    .iz-container { padding: 80px 28px 200px; }
-  }
-
-  .iz-card { background: #252540; border-radius: 18px; overflow: hidden; margin-bottom: 14px; border: 1px solid rgba(255,255,255,0.08); }
-
-  .iz-card-row {
-    display: flex; align-items: center;
-    padding: 16px 18px; gap: 14px;
-    border-bottom: 1px solid rgba(255,255,255,0.07);
-    min-height: 60px; cursor: pointer;
-    transition: background 0.1s ease; user-select: none;
-  }
-  .iz-card-row:last-child { border-bottom: none; }
-  .iz-card-row:active { background: rgba(255,255,255,0.06); }
-
-  .iz-check {
-    width: 28px; height: 28px; flex-shrink: 0;
-    border-radius: 50%; border: 2px solid rgba(255,255,255,0.3);
-    display: flex; align-items: center; justify-content: center;
-    transition: all 0.15s ease;
-  }
-  .iz-check.on-trash { background: #ff453a; border-color: #ff453a; }
-  .iz-check.on-safe  { border-color: rgba(52,211,100,0.6); }
-
-  .iz-row-info { flex: 1; min-width: 0; }
-  .iz-row-sender { font-size: 16px; font-weight: 600; color: #f0eeee; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
-  .iz-row-subject { font-size: 14px; color: #b0aec0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.4; }
-  .iz-row-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
-
-  .iz-pill { font-size: 11px; font-weight: 700; letter-spacing: 0.3px; padding: 4px 10px; border-radius: 20px; text-transform: uppercase; }
-  .iz-pill-promo    { background: rgba(255,159,10,0.2);  color: #ffb340; }
-  .iz-pill-social   { background: rgba(10,132,255,0.2);  color: #409cff; }
-  .iz-pill-listing  { background: rgba(52,211,100,0.2);  color: #34d364; }
-  .iz-pill-inbox    { background: rgba(255,255,255,0.1); color: #c0bdd0; }
-  .iz-pill-account  { font-size: 10px; font-weight: 500; padding: 3px 8px; border-radius: 20px; background: rgba(255,255,255,0.08); color: #a0a0b8; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-  .iz-section-hdr {
-    padding: 12px 18px 8px; font-size: 13px; font-weight: 700; letter-spacing: 0.4px;
-    text-transform: uppercase; color: #a0a0b8;
-    display: flex; justify-content: space-between; align-items: center;
-  }
-  .iz-section-tap { font-size: 14px; font-weight: 600; color: #409cff; cursor: pointer; letter-spacing: 0; text-transform: none; }
-  .iz-section-tap:hover { opacity: 0.7; }
-
-  .iz-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
-  .iz-stat-box { background: #252540; border-radius: 16px; padding: 18px 14px; border: 1px solid rgba(255,255,255,0.07); }
-  .iz-stat-lbl { font-size: 13px; font-weight: 500; color: #a0a0b8; margin-bottom: 6px; }
-  .iz-stat-val { font-size: 30px; font-weight: 700; letter-spacing: -0.5px; color: #f0eeee; }
-
-  .iz-btn {
-    display: flex; align-items: center; justify-content: center; gap: 8px;
-    width: 100%; border: none; cursor: pointer;
-    font-family: -apple-system, 'SF Pro Display', 'Inter', sans-serif;
-    font-size: 17px; font-weight: 700; letter-spacing: -0.2px;
-    border-radius: 16px; padding: 18px 24px;
-    transition: opacity 0.15s ease, transform 0.1s ease;
-    -webkit-font-smoothing: antialiased;
-  }
-  .iz-btn:hover:not(:disabled) { opacity: 0.88; }
-  .iz-btn:active:not(:disabled) { transform: scale(0.98); opacity: 0.75; }
-  .iz-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-  .iz-btn-primary   { background: #409cff; color: #fff; }
-  .iz-btn-red       { background: #ff453a; color: #fff; }
-  .iz-btn-orange    { background: #ff9f0a; color: #fff; }
-  .iz-btn-green     { background: #34d364; color: #fff; }
-  .iz-btn-secondary { background: #35354f; color: #f0eeee; }
-  .iz-btn-google    { background: #fff; color: #1a1a2e; }
-  .iz-btn-google:hover:not(:disabled) { background: #f0eeff !important; }
-
-  /* Account selector — always visible on idle */
-  .iz-account-selector {
-    display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;
-  }
-  .iz-account-chip {
-    display: flex; align-items: center; gap: 7px;
-    padding: 10px 16px; border-radius: 22px; cursor: pointer;
-    font-size: 15px; font-weight: 600; font-family: inherit;
-    border: 2px solid rgba(255,255,255,0.18);
-    background: #252540; color: #b0aec0;
-    transition: all 0.15s ease; user-select: none;
-  }
-  .iz-account-chip.active { background: #409cff; border-color: #409cff; color: #fff; }
-  .iz-account-chip:active { transform: scale(0.97); }
-  .iz-account-chip-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
-
-  /* Account management */
-  .iz-account-row { display: flex; align-items: center; padding: 14px 18px; gap: 14px; border-bottom: 1px solid rgba(255,255,255,0.07); }
-  .iz-account-row:last-child { border-bottom: none; }
-  .iz-account-avatar { width: 36px; height: 36px; border-radius: 50%; background: #35354f; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; color: #409cff; flex-shrink: 0; }
-  .iz-account-email { flex: 1; font-size: 15px; font-weight: 500; color: #f0eeee; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .iz-account-remove { background: none; border: none; cursor: pointer; color: #ff6b6b; font-size: 14px; font-weight: 600; font-family: inherit; padding: 6px 10px; border-radius: 8px; }
-  .iz-account-remove:hover { background: rgba(255,69,58,0.15); }
-
-  .iz-log-entry { font-size: 14px; color: #a0a0b8; line-height: 2; }
-  .iz-log-entry.active { color: #409cff; font-weight: 500; }
-
-  .iz-sticky {
-    position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
-    background: rgba(26,26,46,0.92);
-    backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-    border-top: 1px solid rgba(255,255,255,0.1);
-    padding: 14px 20px max(env(safe-area-inset-bottom), 18px);
-  }
-  .iz-sticky-inner { max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; }
-`;
-
+// -- Icons --
 function GoogleIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
@@ -349,10 +221,10 @@ export default function GmailCleaner() {
   const [selected, setSelected] = useState(new Set());
   const [cleanResult, setCleanResult] = useState(null);
   const [logs, setLogs] = useState([]);
-  const [selectedAccounts, setSelectedAccounts] = useState([]); // which accounts to scan
-  const [listingPhase, setListingPhase] = useState("idle"); // idle | processing | done
+  const [selectedAccounts, setSelectedAccounts] = useState([]);
+  const [listingPhase, setListingPhase] = useState("idle");
   const [listingResults, setListingResults] = useState([]);
-  const [traumaPhase, setTraumaPhase] = useState("idle"); // idle | processing | done
+  const [traumaPhase, setTraumaPhase] = useState("idle");
   const [traumaResults, setTraumaResults] = useState([]);
   const logRef = useRef(null);
 
@@ -364,9 +236,6 @@ export default function GmailCleaner() {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [logs]);
 
-  const IMAP_ACCOUNT = "andybot@phillyshah.com";
-
-  // Default: all accounts selected (including IMAP)
   useEffect(() => {
     setSelectedAccounts([...accounts.map((a) => a.email), IMAP_ACCOUNT]);
   }, [accounts]);
@@ -374,7 +243,7 @@ export default function GmailCleaner() {
   const toggleAccountSelection = (email) => {
     setSelectedAccounts((prev) =>
       prev.includes(email)
-        ? prev.length > 1 ? prev.filter((e) => e !== email) : prev // keep at least one
+        ? prev.length > 1 ? prev.filter((e) => e !== email) : prev
         : [...prev, email]
     );
   };
@@ -409,12 +278,13 @@ export default function GmailCleaner() {
     setLogs([]);
 
     const toScan = accounts.filter((a) => selectedAccounts.includes(a.email));
-    const all = [];
+    const scanImap = selectedAccounts.includes(IMAP_ACCOUNT);
 
-    for (const account of toScan) {
+    // Scan all accounts + IMAP in parallel
+    const scanPromises = toScan.map(async (account) => {
       addLog(`Scanning ${account.email}…`);
       const token = await getValidToken(account);
-      if (!token) { addLog(`Skipped — token expired for ${account.email}`); continue; }
+      if (!token) { addLog(`Skipped — token expired for ${account.email}`); return []; }
       try {
         const res = await fetch("/api/scan", {
           method: "POST",
@@ -422,32 +292,34 @@ export default function GmailCleaner() {
           body: JSON.stringify({ accessToken: token }),
         });
         const result = await res.json();
-        if (result.error) { addLog(`Error: ${result.error}`); continue; }
-        all.push(
+        if (result.error) { addLog(`Error: ${result.error}`); return []; }
+        addLog(`${account.email}: ${result.promotions.length} promos, ${result.social.length} social.`);
+        return [
           ...(result.promotions || []).map((e) => ({ ...e, category: "promo", account: account.email, source: "gmail" })),
           ...(result.social || []).map((e) => ({ ...e, category: "social", account: account.email, source: "gmail" })),
-        );
-        addLog(`${account.email}: ${result.promotions.length} promos, ${result.social.length} social.`);
+        ];
       } catch (err) {
         addLog(`Error (${account.email}): ${err.message}`);
+        return [];
       }
+    });
+
+    if (scanImap) {
+      addLog(`Scanning ${IMAP_ACCOUNT} (IMAP)…`);
+      scanPromises.push(
+        fetch("/api/scan-imap", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+          .then((r) => r.json())
+          .then((result) => {
+            if (result.error) { addLog(`IMAP error: ${result.error}`); return []; }
+            addLog(`${IMAP_ACCOUNT}: ${result.emails.length} emails.`);
+            return result.emails || [];
+          })
+          .catch((err) => { addLog(`IMAP error: ${err.message}`); return []; })
+      );
     }
 
-    // Scan IMAP account
-    if (selectedAccounts.includes(IMAP_ACCOUNT)) {
-      addLog(`Scanning ${IMAP_ACCOUNT} (IMAP)…`);
-      try {
-        const res = await fetch("/api/scan-imap", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-        const result = await res.json();
-        if (result.error) { addLog(`IMAP error: ${result.error}`); }
-        else {
-          all.push(...(result.emails || []));
-          addLog(`${IMAP_ACCOUNT}: ${result.emails.length} emails.`);
-        }
-      } catch (err) {
-        addLog(`IMAP error: ${err.message}`);
-      }
-    }
+    const results = await Promise.all(scanPromises);
+    const all = results.flat();
 
     const safeSet = new Set(loadPrefs().safe);
     const initSelected = new Set(all.filter((e) => !safeSet.has(extractEmail(e.sender))).map((e) => e.id));
@@ -487,51 +359,56 @@ export default function GmailCleaner() {
     addLog(`${action === "spam" ? "Marking spam" : "Trashing"} ${toAct.length} messages…`);
 
     let totalDone = 0;
-
-    // Handle IMAP emails
     const imapEmails = toAct.filter((e) => e.source === "imap");
+    const gmailEmails = toAct.filter((e) => e.source !== "imap");
+
+    // Process IMAP and Gmail in parallel
+    const promises = [];
+
     if (imapEmails.length > 0) {
       const endpoint = action === "spam" ? "/api/spam-imap" : "/api/trash-imap";
-      try {
-        const res = await fetch(endpoint, {
+      promises.push(
+        fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ uids: imapEmails.map((e) => e.id) }),
-        });
-        const result = await res.json();
-        totalDone += result.deleted || result.marked || imapEmails.length;
-      } catch (err) {
-        addLog(`IMAP error: ${err.message}`);
-      }
+        })
+          .then((r) => r.json())
+          .then((result) => { totalDone += result.deleted || result.marked || imapEmails.length; })
+          .catch((err) => addLog(`IMAP error: ${err.message}`))
+      );
     }
 
-    // Handle Gmail emails
-    const gmailEmails = toAct.filter((e) => e.source !== "imap");
     const byAccount = {};
     gmailEmails.forEach((e) => {
       if (!byAccount[e.account]) byAccount[e.account] = [];
       byAccount[e.account].push(e.id);
     });
 
-    const endpoint = action === "spam" ? "/api/spam" : "/api/trash";
+    const gmailEndpoint = action === "spam" ? "/api/spam" : "/api/trash";
     for (const [accountEmail, ids] of Object.entries(byAccount)) {
       const account = accounts.find((a) => a.email === accountEmail);
       if (!account) continue;
-      const token = await getValidToken(account);
-      if (!token) continue;
-      try {
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ accessToken: token, ids }),
-        });
-        const result = await res.json();
-        totalDone += result.deleted || result.marked || ids.length;
-      } catch (err) {
-        addLog(`Error (${accountEmail}): ${err.message}`);
-      }
+      promises.push(
+        (async () => {
+          const token = await getValidToken(account);
+          if (!token) return;
+          try {
+            const res = await fetch(gmailEndpoint, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ accessToken: token, ids }),
+            });
+            const result = await res.json();
+            totalDone += result.deleted || result.marked || ids.length;
+          } catch (err) {
+            addLog(`Error (${accountEmail}): ${err.message}`);
+          }
+        })()
+      );
     }
 
+    await Promise.all(promises);
     applyChoices(toKeep, toAct);
     setCleanResult({ count: totalDone, kept: toKeep.length, action });
     addLog(`Done. ${totalDone} ${action === "spam" ? "marked spam" : "trashed"}, ${toKeep.length} kept.`);
@@ -573,7 +450,6 @@ export default function GmailCleaner() {
     addLog(`Listings done: ${notified} matched (Telegram sent), ${trashed} trashed.`);
     setListingResults(allResults);
     setListingPhase("done");
-    // Remove all processed listing emails (all Zillow emails go to trash after analysis)
     const processedIds = new Set(allResults.map((r) => r.id));
     setEmails((prev) => prev.filter((e) => !processedIds.has(e.id)));
   };
@@ -583,7 +459,6 @@ export default function GmailCleaner() {
     setTraumaPhase("processing");
     addLog(`Processing ${traumaEmails.length} trauma dashboard email${traumaEmails.length > 1 ? "s" : ""}…`);
 
-    // Separate by source
     const imapTrauma = traumaEmails.filter((e) => e.source === "imap");
     const allResults = [];
 
@@ -630,8 +505,6 @@ export default function GmailCleaner() {
 
   return (
     <div className="iz-wrap">
-      <style>{globalCSS}</style>
-
       <div className="iz-container">
 
         {/* Header */}
@@ -672,7 +545,7 @@ export default function GmailCleaner() {
           </div>
         )}
 
-        {/* Account selector chips (only when multiple accounts) */}
+        {/* Account selector chips */}
         {phase === "idle" && !initializing && accounts.length > 0 && (
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: "#8e8e93", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 10 }}>
@@ -690,7 +563,6 @@ export default function GmailCleaner() {
                   </button>
                 );
               })}
-              {/* IMAP account chip */}
               <button
                 className={`iz-account-chip${selectedAccounts.includes(IMAP_ACCOUNT) ? " active" : ""}`}
                 onClick={() => toggleAccountSelection(IMAP_ACCOUNT)}
@@ -743,7 +615,7 @@ export default function GmailCleaner() {
             {listingEmails.length > 0 && listingPhase !== "done" && (
               <div className="iz-card" style={{ borderLeft: "3px solid #30d158" }}>
                 <div className="iz-section-hdr" style={{ color: "#30d158" }}>
-                  🏠 Zillow Listings — {listingEmails.length}
+                  Zillow Listings — {listingEmails.length}
                 </div>
                 {listingEmails.map((e) => (
                   <div key={e.id} style={{ display: "flex", alignItems: "center", padding: "10px 16px", gap: 12, borderBottom: "1px solid rgba(84,84,88,0.3)" }}>
@@ -770,7 +642,7 @@ export default function GmailCleaner() {
             {traumaEmails.length > 0 && traumaPhase !== "done" && (
               <div className="iz-card" style={{ borderLeft: "3px solid #0a84ff" }}>
                 <div className="iz-section-hdr" style={{ color: "#0a84ff" }}>
-                  📊 Trauma Dashboard — {traumaEmails.length}
+                  Trauma Dashboard — {traumaEmails.length}
                 </div>
                 {traumaEmails.map((e) => (
                   <div key={e.id} style={{ display: "flex", alignItems: "center", padding: "10px 16px", gap: 12, borderBottom: "1px solid rgba(84,84,88,0.3)" }}>
@@ -793,7 +665,7 @@ export default function GmailCleaner() {
             {traumaPhase === "done" && traumaResults.length > 0 && (
               <div className="iz-card" style={{ padding: "16px" }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: "#0a84ff", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 10 }}>
-                  📊 Trauma Processed
+                  Trauma Processed
                 </div>
                 {traumaResults.map((r, i) => (
                   <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", borderBottom: "1px solid rgba(84,84,88,0.2)" }}>
@@ -811,7 +683,7 @@ export default function GmailCleaner() {
             {listingPhase === "done" && listingResults.length > 0 && (
               <div className="iz-card" style={{ padding: "16px" }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: "#30d158", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 10 }}>
-                  🏠 Listings Processed
+                  Listings Processed
                 </div>
                 {listingResults.map((r, i) => (
                   <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", borderBottom: "1px solid rgba(84,84,88,0.2)" }}>
@@ -899,7 +771,7 @@ export default function GmailCleaner() {
           </div>
         )}
 
-        <div style={{ marginTop: 40, fontSize: 13, color: "#55556a", textAlign: "center" }}>v2.1</div>
+        <div style={{ marginTop: 40, fontSize: 13, color: "#55556a", textAlign: "center" }}>v1.0</div>
       </div>
 
       {/* Sticky bottom bar */}
