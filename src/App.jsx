@@ -383,9 +383,10 @@ export default function GmailCleaner() {
     emails.forEach((e) => {
       const addr = extractEmail(e.sender);
       countMap[e.id] = trashCounts[addr] || 0;
+      const subjectLower = e.subject?.toLowerCase() || "";
       const isListing =
         addr.includes("zillow") &&
-        e.subject?.toLowerCase().includes("new listing");
+        (subjectLower.includes("new listing") || subjectLower.includes("price cut"));
       if (isListing) listings.push(e);
       else if (safeSet.has(addr)) safe.push(e);
       else review.push(e);
