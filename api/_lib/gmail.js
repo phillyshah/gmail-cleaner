@@ -67,6 +67,21 @@ export async function modifyMessage(accessToken, messageId, body) {
   });
 }
 
+export async function getOrCreateLabel(accessToken, name) {
+  const headers = { Authorization: `Bearer ${accessToken}` };
+  const r = await fetch(`${GMAIL_BASE}/labels`, { headers });
+  const data = await r.json();
+  const existing = (data.labels || []).find((l) => l.name.toLowerCase() === name.toLowerCase());
+  if (existing) return existing.id;
+  const create = await fetch(`${GMAIL_BASE}/labels`, {
+    method: "POST",
+    headers: gmailHeaders(accessToken),
+    body: JSON.stringify({ name, labelListVisibility: "labelShow", messageListVisibility: "show" }),
+  });
+  const label = await create.json();
+  return label.id;
+}
+
 export async function getAccessToken(refreshToken) {
   const r = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",

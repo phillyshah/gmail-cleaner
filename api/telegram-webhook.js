@@ -2,7 +2,7 @@ import { Redis } from "@upstash/redis";
 import * as XLSX from "xlsx";
 import { withImap } from "./_lib/imap.js";
 import { sendTelegram } from "./_lib/telegram.js";
-import { getAccessToken, searchGmail, trashMessage, markAsRead, getFullMessage, modifyMessage } from "./_lib/gmail.js";
+import { getAccessToken, searchGmail, trashMessage, markAsRead, getFullMessage, modifyMessage, getOrCreateLabel } from "./_lib/gmail.js";
 import { extractBody, extractListing, evaluateListing, formatListingTelegram } from "./_lib/listings.js";
 
 export const config = { maxDuration: 60 };
@@ -137,10 +137,11 @@ async function processGmailListing(email, accessToken) {
   return result.matches ? "notified" : "trashed";
 }
 
-async function spamGmailEmails(accessToken, ids) {
+async function labelGmailEmails(accessToken, ids) {
+  const labelId = await getOrCreateLabel(accessToken, "telegram");
   await Promise.all(
     ids.map((id) =>
-      modifyMessage(accessToken, id, { addLabelIds: ["SPAM"], removeLabelIds: ["INBOX"] })
+      modifyMessage(accessToken, id, { addLabelIds: [labelId], removeLabelIds: ["UNREAD"] })
     )
   );
 }
@@ -167,94 +168,96 @@ export default async function handler(req, res) {
     return;
   }
 
-  let totalSpammed = 0, totalNotified = 0, totalListingsTrashed = 0, totalTrauma = 0;
+  let totalLabeled = 0, totalNotified = 0, totalListingsTrashed = 0, totalTrauma = 0;
 
-  // Scan all Gmail accounts in parallel
-  const accountResults = await Promise.all(
-    accounts.map(async (account) => {
-      const token = await getAccessToken(account.refreshToken);
-      if (!token) return { account, token: null, emails: [] };
-      const [promos, social, allListings] = await Promise.all([
-        searchGmail(token, "category:promotions newer_than:1d"),
-        searchGmail(token, "category:social newer_than:1d"),
-        // Search ALL categories for listing emails in the past 24hrs
-        searchGmail(token, "in:anywhere (from:newwestern.com OR (from:zillow subject:(\"new listing\" OR \"price cut\"))) newer_than:1d"),
-      ]);
-      // Deduplicate: listings first so they aren't classified as spam
-      const seen = new Set();
-      const all = [];
-      for (const e of [
-        ...allListings.map((e) => ({ ...e, category: "listing" })),
-        ...promos.map((e) => ({ ...e, category: "promo" })),
-        ...social.map((e) => ({ ...e, category: "social" })),
-      ]) {
-        if (!seen.has(e.id)) { seen.add(e.id); all.push(e); }
+  try {
+    // Scan all Gmail accounts in parallel
+    const accountResults = await Promise.all(
+      accounts.map(async (account) => {
+        const token = await getAccessToken(account.refreshToken);
+        if (!token) return { account, token: null, emails: [] };
+        const [promos, social, allListings] = await Promise.all([
+          searchGmail(token, "category:promotions newer_than:1d"),
+          searchGmail(token, "category:social newer_than:1d"),
+          // Search ALL categories for listing emails in the past 24hrs
+          searchGmail(token, "in:anywhere (from:newwestern.com OR (from:zillow subject:(\"new listing\" OR \"price cut\"))) newer_than:1d"),
+        ]);
+        // Deduplicate: listings first so they aren't misclassified
+        const seen = new Set();
+        const all = [];
+        for (const e of [
+          ...allListings.map((e) => ({ ...e, category: "listing" })),
+          ...promos.map((e) => ({ ...e, category: "promo" })),
+          ...social.map((e) => ({ ...e, category: "social" })),
+        ]) {
+          if (!seen.has(e.id)) { seen.add(e.id); all.push(e); }
+        }
+        return { account, token, emails: all };
+      })
+    );
+
+    for (const { account, token, emails } of accountResults) {
+      if (!token) {
+        await sendTelegram(`⚠️ Could not refresh token for ${account.email} — skipping.`);
+        continue;
       }
-      return { account, token, emails: all };
-    })
-  );
 
-  for (const { account, token, emails } of accountResults) {
-    if (!token) {
-      await sendTelegram(`⚠️ Could not refresh token for ${account.email} — skipping.`);
-      continue;
+      const listings = emails.filter(isListing);
+      const rest = emails.filter((e) => !isListing(e));
+
+      // Label non-listing promo/social emails as "telegram" for review
+      if (rest.length) {
+        await labelGmailEmails(token, rest.map((e) => e.id));
+        totalLabeled += rest.length;
+      }
+
+      // Analyze each listing through Claude
+      for (const listing of listings) {
+        try {
+          const action = await processGmailListing(listing, token);
+          if (action === "notified") totalNotified++;
+          else totalListingsTrashed++;
+        } catch (err) {
+          await trashMessage(token, listing.id).catch(() => {});
+          totalListingsTrashed++;
+        }
+      }
     }
 
-    const listings = emails.filter(isListing);
-    const spam = emails.filter((e) => !isListing(e));
+    // Scan IMAP account (Hostinger)
+    await sendTelegram(`📬 Scanning ${process.env.HOSTINGER_EMAIL}...`);
+    const imapEmails = await scanImap();
+    const imapListings = imapEmails.filter((e) => e.category === "listing");
+    const imapTrauma = imapEmails.filter((e) => e.category === "trauma");
+    const imapSpam = imapEmails.filter((e) => e.category === "inbox");
 
-    // Mark all promo/social as spam (not just trash — keep inbox clean)
-    if (spam.length) {
-      await spamGmailEmails(token, spam.map((e) => e.id));
-      totalSpammed += spam.length;
+    // Spam regular IMAP inbox emails
+    if (imapSpam.length) {
+      await spamImapEmails(imapSpam.map((e) => e.id));
     }
 
-    // Analyze each Zillow listing through Claude
-    for (const listing of listings) {
+    // Trash IMAP listings
+    if (imapListings.length) {
+      await trashImapEmails(imapListings.map((e) => e.id));
+      totalListingsTrashed += imapListings.length;
+    }
+
+    // Process trauma dashboard emails
+    for (const email of imapTrauma) {
       try {
-        const action = await processGmailListing(listing, token);
-        if (action === "notified") totalNotified++;
-        else totalListingsTrashed++;
+        await processTraumaEmail(email);
+        totalTrauma++;
       } catch (err) {
-        // If listing analysis fails, trash it
-        await trashMessage(token, listing.id).catch(() => {});
-        totalListingsTrashed++;
+        await sendTelegram(`⚠️ Trauma error: ${err.message}`);
       }
     }
-  }
-
-  // Scan IMAP account (Hostinger)
-  await sendTelegram(`📬 Scanning ${process.env.HOSTINGER_EMAIL}...`);
-  const imapEmails = await scanImap();
-  const imapListings = imapEmails.filter((e) => e.category === "listing");
-  const imapTrauma = imapEmails.filter((e) => e.category === "trauma");
-  const imapSpam = imapEmails.filter((e) => e.category === "inbox");
-
-  // Spam all regular IMAP emails
-  if (imapSpam.length) {
-    await spamImapEmails(imapSpam.map((e) => e.id));
-    totalSpammed += imapSpam.length;
-  }
-
-  // Trash IMAP listings (can't do full body analysis via IMAP easily)
-  if (imapListings.length) {
-    await trashImapEmails(imapListings.map((e) => e.id));
-    totalListingsTrashed += imapListings.length;
-  }
-
-  // Process trauma dashboard emails
-  for (const email of imapTrauma) {
-    try {
-      await processTraumaEmail(email);
-      totalTrauma++;
-    } catch (err) {
-      await sendTelegram(`⚠️ Trauma error: ${err.message}`);
-    }
+  } catch (err) {
+    await sendTelegram(`❌ Error during cleanup: ${err.message}`);
   }
 
   await sendTelegram(
     `✅ *Cleanup complete!*\n\n` +
-    `🚫 ${totalSpammed} emails spammed\n` +
+    `🏷 ${totalLabeled} emails tagged for review\n` +
     `🏠 ${totalNotified} listings matched & sent\n` +
     `🗑 ${totalListingsTrashed} listings trashed\n` +
     `📊 ${totalTrauma} trauma dashboard${totalTrauma !== 1 ? "s" : ""} processed`
