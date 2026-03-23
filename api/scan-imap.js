@@ -6,7 +6,7 @@ export default async function handler(req, res) {
   try {
     const emails = await withImap(async (client) => {
       const since = new Date();
-      since.setDate(since.getDate() - 30);
+      since.setDate(since.getDate() - 1);
       const uids = await client.search({ since }, { uid: true });
       if (!uids.length) return [];
 
