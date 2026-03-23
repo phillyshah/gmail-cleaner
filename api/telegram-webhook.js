@@ -26,7 +26,7 @@ async function scanImap() {
     if (!uids.length) return [];
 
     const emails = [];
-    for await (const msg of client.fetch(uids.reverse(), { envelope: true, flags: true }, { uid: true })) {
+    for await (const msg of client.fetch(uids.slice(-50).reverse(), { envelope: true, flags: true }, { uid: true })) {
       const from = msg.envelope.from?.[0];
       const sender = from ? `${from.name ? from.name + " " : ""}<${from.address}>` : "Unknown";
       const sub = (msg.envelope.subject || "").toLowerCase();
