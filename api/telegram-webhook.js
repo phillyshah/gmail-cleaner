@@ -129,13 +129,12 @@ async function processGmailListing(email, accessToken) {
   const url = result.url || zillowUrl || body.match(/ZILLOW_URL: (\S+)/)?.[1] || null;
 
   if (result.matches) {
-    await markAsRead(accessToken, email.id);
     await sendTelegram(formatListingTelegram(result, url));
-    return "notified";
-  } else {
-    await Promise.all([trashMessage(accessToken, email.id), markAsRead(accessToken, email.id)]);
-    return "trashed";
   }
+
+  // Always mark as read and trash all Zillow emails
+  await Promise.all([markAsRead(accessToken, email.id), trashMessage(accessToken, email.id)]);
+  return result.matches ? "notified" : "trashed";
 }
 
 async function spamGmailEmails(accessToken, ids) {
