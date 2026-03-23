@@ -15,7 +15,7 @@ const redis = new Redis({
 function isListing(email) {
   const addr = (email.sender.match(/<(.+?)>/) ? email.sender.match(/<(.+?)>/)[1] : email.sender).toLowerCase();
   const sub = email.subject.toLowerCase();
-  return addr.includes("zillow") && (sub.includes("new listing") || sub.includes("price cut"));
+  return (addr.includes("zillow") && (sub.includes("new listing") || sub.includes("price cut"))) || addr.includes("newwestern.com");
 }
 
 async function scanImap() {
@@ -32,7 +32,7 @@ async function scanImap() {
       const sub = (msg.envelope.subject || "").toLowerCase();
       const snd = sender.toLowerCase();
       const category = sub.includes("trauma dashboard") ? "trauma"
-        : (snd.includes("zillow") && (sub.includes("new listing") || sub.includes("price cut"))) ? "listing"
+        : ((snd.includes("zillow") && (sub.includes("new listing") || sub.includes("price cut"))) || snd.includes("newwestern.com")) ? "listing"
         : "inbox";
       emails.push({
         id: String(msg.uid), subject: msg.envelope.subject || "(no subject)",
@@ -129,13 +129,12 @@ async function processGmailListing(email, accessToken) {
   const url = result.url || zillowUrl || body.match(/ZILLOW_URL: (\S+)/)?.[1] || null;
 
   if (result.matches) {
-    await markAsRead(accessToken, email.id);
     await sendTelegram(formatListingTelegram(result, url));
-    return "notified";
-  } else {
-    await Promise.all([trashMessage(accessToken, email.id), markAsRead(accessToken, email.id)]);
-    return "trashed";
   }
+
+  // Always mark as read and trash all Zillow emails
+  await Promise.all([markAsRead(accessToken, email.id), trashMessage(accessToken, email.id)]);
+  return result.matches ? "notified" : "trashed";
 }
 
 async function spamGmailEmails(accessToken, ids) {

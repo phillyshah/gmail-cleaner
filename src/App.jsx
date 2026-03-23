@@ -348,8 +348,8 @@ export default function GmailCleaner() {
       countMap[e.id] = trashCounts[addr] || 0;
       const subjectLower = e.subject?.toLowerCase() || "";
       const isListing =
-        addr.includes("zillow") &&
-        (subjectLower.includes("new listing") || subjectLower.includes("price cut"));
+        (addr.includes("zillow") && (subjectLower.includes("new listing") || subjectLower.includes("price cut"))) ||
+        addr.includes("newwestern.com");
       const isTrauma = subjectLower.includes("trauma dashboard") || e.category === "trauma";
       if (isTrauma) trauma.push(e);
       else if (isListing) listings.push(e);
@@ -465,6 +465,50 @@ export default function GmailCleaner() {
     setEmails(remaining);
     setActions(initActions);
     setPhase("review");
+
+    // Auto-process Zillow listings immediately (no manual button needed)
+    const listingsToProcess = remaining.filter((e) => {
+      const addr = extractEmail(e.sender);
+      const subjectLower = e.subject?.toLowerCase() || "";
+      return (addr.includes("zillow") && (subjectLower.includes("new listing") || subjectLower.includes("price cut"))) || addr.includes("newwestern.com");
+    });
+    if (listingsToProcess.length) {
+      setListingPhase("processing");
+      addLog(`Auto-analyzing ${listingsToProcess.length} Zillow listing${listingsToProcess.length > 1 ? "s" : ""}…`);
+
+      const byAccount = {};
+      listingsToProcess.forEach((e) => {
+        if (!byAccount[e.account]) byAccount[e.account] = [];
+        byAccount[e.account].push(e);
+      });
+
+      const allResults = [];
+      for (const [accountEmail, emailBatch] of Object.entries(byAccount)) {
+        const account = accounts.find((a) => a.email === accountEmail);
+        if (!account) continue;
+        const token = await getValidToken(account);
+        if (!token) continue;
+        try {
+          const res = await fetch("/api/process-listings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ accessToken: token, emails: emailBatch }),
+          });
+          const data = await res.json();
+          allResults.push(...(data.results || []));
+        } catch (err) {
+          addLog(`Error processing listings (${accountEmail}): ${err.message}`);
+        }
+      }
+
+      const notified = allResults.filter((r) => r.action === "notified").length;
+      const trashed = allResults.filter((r) => r.action === "trashed").length;
+      addLog(`Listings done: ${notified} matched (Telegram sent), ${trashed} trashed.`);
+      setListingResults(allResults);
+      setListingPhase("done");
+      const processedIds = new Set(allResults.map((r) => r.id));
+      setEmails((prev) => prev.filter((e) => !processedIds.has(e.id)));
+    }
   };
 
   const cycleAction = (id) => {
@@ -774,29 +818,10 @@ export default function GmailCleaner() {
               </div>
             </div>
 
-            {listingEmails.length > 0 && listingPhase !== "done" && (
+            {listingPhase === "processing" && (
               <div className="iz-card" style={{ borderLeft: "3px solid #30d158" }}>
                 <div className="iz-section-hdr" style={{ color: "#30d158" }}>
-                  Zillow Listings — {listingEmails.length}
-                </div>
-                {listingEmails.map((e) => (
-                  <div key={e.id} style={{ display: "flex", alignItems: "center", padding: "10px 16px", gap: 12, borderBottom: "1px solid rgba(84,84,88,0.3)" }}>
-                    <div className="iz-row-info">
-                      <div className="iz-row-sender">{e.subject}</div>
-                      <div className="iz-row-subject">{e.sender}</div>
-                    </div>
-                    <span className="iz-pill iz-pill-listing">listing</span>
-                  </div>
-                ))}
-                <div style={{ padding: "12px 16px" }}>
-                  <button
-                    className="iz-btn iz-btn-green"
-                    onClick={processListings}
-                    disabled={listingPhase === "processing"}
-                    style={{ fontSize: 14 }}
-                  >
-                    {listingPhase === "processing" ? <><Spinner /> Analyzing…</> : `Analyze ${listingEmails.length} Listing${listingEmails.length > 1 ? "s" : ""}`}
-                  </button>
+                  <Spinner /> Auto-analyzing Zillow Listings…
                 </div>
               </div>
             )}
