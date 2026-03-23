@@ -174,17 +174,23 @@ export default async function handler(req, res) {
     accounts.map(async (account) => {
       const token = await getAccessToken(account.refreshToken);
       if (!token) return { account, token: null, emails: [] };
-      const [promos, social] = await Promise.all([
+      const [promos, social, inboxListings] = await Promise.all([
         searchGmail(token, "category:promotions newer_than:30d"),
         searchGmail(token, "category:social newer_than:30d"),
+        // Search primary inbox specifically for listing emails (Zillow + New Western)
+        searchGmail(token, "in:inbox (from:newwestern.com OR (from:zillow subject:(\"new listing\" OR \"price cut\"))) newer_than:30d"),
       ]);
-      return {
-        account, token,
-        emails: [
-          ...promos.map((e) => ({ ...e, category: "promo" })),
-          ...social.map((e) => ({ ...e, category: "social" })),
-        ],
-      };
+      // Deduplicate across all sources
+      const seen = new Set();
+      const all = [];
+      for (const e of [
+        ...inboxListings.map((e) => ({ ...e, category: "listing" })),
+        ...promos.map((e) => ({ ...e, category: "promo" })),
+        ...social.map((e) => ({ ...e, category: "social" })),
+      ]) {
+        if (!seen.has(e.id)) { seen.add(e.id); all.push(e); }
+      }
+      return { account, token, emails: all };
     })
   );
 
