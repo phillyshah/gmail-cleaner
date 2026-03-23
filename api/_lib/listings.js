@@ -35,14 +35,15 @@ export function extractBody(email) {
 }
 
 export async function extractListing(subject, body) {
-  const prompt = `Extract listing details from this Zillow email. Return ONLY valid JSON, no markdown.
+  const prompt = `Extract listing details from this real estate email. Return ONLY valid JSON, no markdown.
 Subject: ${subject}
 Body: ${body.substring(0, 4000)}
 Rules:
 - "address" must be the full street address of THIS specific property including its ZIP code
 - "zip" must come from that property's street address only
-- "url" should be the direct Zillow property link, or the ZILLOW_URL value if present
-{"address":"full address with zip","zip":"5-digit zip","type":"single family/duplex/condo/townhome/lot/other","beds":3,"price":185000,"url":"zillow url or null"}`;
+- "price" must be the listing/sale price as a number (no $ or commas). Look for price, list price, asking price, sale price, ARV, or any dollar amount associated with the property
+- "url" should be a property link if present (Zillow, New Western, or any listing URL), or the ZILLOW_URL value if present
+{"address":"full address with zip","zip":"5-digit zip","type":"single family/duplex/condo/townhome/lot/other","beds":3,"price":185000,"url":"listing url or null"}`;
 
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -111,6 +112,6 @@ export function formatListingTelegram(listing, zillowUrl) {
     `🏡 ${listing.type || "?"}\n` +
     `📮 ZIP: ${listing.zip || "?"}\n\n` +
     `✅ ${listing.reason}\n\n` +
-    (url ? `[View on Zillow](${url})` : "⚠️ No Zillow link found")
+    (url ? `[View Listing](${url})` : "⚠️ No listing link found")
   );
 }
