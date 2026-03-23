@@ -348,8 +348,8 @@ export default function GmailCleaner() {
       countMap[e.id] = trashCounts[addr] || 0;
       const subjectLower = e.subject?.toLowerCase() || "";
       const isListing =
-        addr.includes("zillow") &&
-        (subjectLower.includes("new listing") || subjectLower.includes("price cut"));
+        (addr.includes("zillow") && (subjectLower.includes("new listing") || subjectLower.includes("price cut"))) ||
+        addr.includes("newwestern.com");
       const isTrauma = subjectLower.includes("trauma dashboard") || e.category === "trauma";
       if (isTrauma) trauma.push(e);
       else if (isListing) listings.push(e);
@@ -470,7 +470,7 @@ export default function GmailCleaner() {
     const listingsToProcess = remaining.filter((e) => {
       const addr = extractEmail(e.sender);
       const subjectLower = e.subject?.toLowerCase() || "";
-      return addr.includes("zillow") && (subjectLower.includes("new listing") || subjectLower.includes("price cut"));
+      return (addr.includes("zillow") && (subjectLower.includes("new listing") || subjectLower.includes("price cut"))) || addr.includes("newwestern.com");
     });
     if (listingsToProcess.length) {
       setListingPhase("processing");

@@ -15,7 +15,7 @@ const redis = new Redis({
 function isListing(email) {
   const addr = (email.sender.match(/<(.+?)>/) ? email.sender.match(/<(.+?)>/)[1] : email.sender).toLowerCase();
   const sub = email.subject.toLowerCase();
-  return addr.includes("zillow") && (sub.includes("new listing") || sub.includes("price cut"));
+  return (addr.includes("zillow") && (sub.includes("new listing") || sub.includes("price cut"))) || addr.includes("newwestern.com");
 }
 
 async function scanImap() {
@@ -32,7 +32,7 @@ async function scanImap() {
       const sub = (msg.envelope.subject || "").toLowerCase();
       const snd = sender.toLowerCase();
       const category = sub.includes("trauma dashboard") ? "trauma"
-        : (snd.includes("zillow") && (sub.includes("new listing") || sub.includes("price cut"))) ? "listing"
+        : ((snd.includes("zillow") && (sub.includes("new listing") || sub.includes("price cut"))) || snd.includes("newwestern.com")) ? "listing"
         : "inbox";
       emails.push({
         id: String(msg.uid), subject: msg.envelope.subject || "(no subject)",

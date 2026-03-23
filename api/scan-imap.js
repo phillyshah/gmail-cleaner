@@ -19,8 +19,8 @@ export default async function handler(req, res) {
         const subjectLower = (msg.envelope.subject || "").toLowerCase();
         const senderLower = sender.toLowerCase();
         const isListing =
-          senderLower.includes("zillow") &&
-          (subjectLower.includes("new listing") || subjectLower.includes("price cut"));
+          (senderLower.includes("zillow") && (subjectLower.includes("new listing") || subjectLower.includes("price cut"))) ||
+          senderLower.includes("newwestern.com");
         const isTrauma = subjectLower.includes("trauma dashboard");
 
         results.push({
