@@ -944,7 +944,7 @@ export default function GmailCleaner() {
           </div>
         )}
 
-        <div style={{ marginTop: 40, fontSize: 13, color: "#55556a", textAlign: "center" }}>v1.0</div>
+        <div style={{ marginTop: 40, fontSize: 13, color: "#55556a", textAlign: "center" }}>v2.0</div>
       </div>
 
       {/* Sticky bottom bar */}
