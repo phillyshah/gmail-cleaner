@@ -217,9 +217,10 @@ function BanIcon({ color = "#fff" }) {
 // action: "trash" | "spam" | "keep"
 const ACTION_CYCLE = ["trash", "spam", "keep"];
 
-function EmailRow({ email, action, onCycle, trashCount, showAccount }) {
+function EmailRow({ email, action, onCycle, trashCount, showAccount, aiCategory }) {
   const name = email.sender.replace(/<[^>]+>/, "").replace(/"/g, "").trim() || extractEmail(email.sender);
   const accountLabel = email.account ? email.account.split("@")[0] : null;
+  const displayCategory = aiCategory || email.category;
 
   const checkClass = action === "trash" ? " on-trash"
     : action === "spam" ? " on-spam"
@@ -237,7 +238,7 @@ function EmailRow({ email, action, onCycle, trashCount, showAccount }) {
         <div className="iz-row-subject">{email.subject}</div>
       </div>
       <div className="iz-row-meta">
-        <span className={`iz-pill iz-pill-${email.category}`}>{email.category}</span>
+        <span className={`iz-pill iz-pill-${displayCategory}`}>{displayCategory}</span>
         {showAccount && accountLabel && <span className="iz-pill-account">{accountLabel}</span>}
         {action === "trash" && <span style={{ fontSize: 10, color: "#ff453a", fontWeight: 600 }}>trash</span>}
         {action === "spam" && <span style={{ fontSize: 10, color: "#ff9f0a", fontWeight: 600 }}>spam</span>}
@@ -316,6 +317,7 @@ export default function GmailCleaner() {
   const [traumaPhase, setTraumaPhase] = useState("idle");
   const [traumaResults, setTraumaResults] = useState([]);
   const [autoSpamCount, setAutoSpamCount] = useState(0);
+  const [aiClassifications, setAiClassifications] = useState({});
   const logRef = useRef(null);
 
   const addLog = useCallback((msg) => {
@@ -383,6 +385,7 @@ export default function GmailCleaner() {
     setCleanResult(null);
     setLogs([]);
     setAutoSpamCount(0);
+    setAiClassifications({});
 
     const toScan = accounts.filter((a) => selectedAccounts.includes(a.email));
     const scanImapEnabled = selectedAccounts.includes(IMAP_ACCOUNT);
@@ -465,6 +468,44 @@ export default function GmailCleaner() {
     setEmails(remaining);
     setActions(initActions);
     setPhase("review");
+
+    // Background: classify unknown senders via AI
+    const unknownSenders = [];
+    const seenAddrs = new Set();
+    for (const e of remaining) {
+      const addr = extractEmail(e.sender);
+      if (!safeSet.has(addr) && !spamSet.has(addr) && !seenAddrs.has(addr)) {
+        seenAddrs.add(addr);
+        const name = e.sender.replace(/<[^>]+>/, "").replace(/"/g, "").trim();
+        unknownSenders.push({ email: addr, name, subject: e.subject, snippet: e.snippet || "" });
+      }
+    }
+    if (unknownSenders.length) {
+      fetch("/api/classify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId: toScan[0]?.email || "default", senders: unknownSenders }),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.classifications) {
+            setAiClassifications(data.classifications);
+            addLog(`AI classified ${Object.keys(data.classifications).length} senders.`);
+            setActions((prev) => {
+              const next = new Map(prev);
+              for (const e of remaining) {
+                const addr = extractEmail(e.sender);
+                const cls = data.classifications[addr];
+                if (cls && !safeSet.has(addr) && cls.suggested_action) {
+                  next.set(e.id, cls.suggested_action);
+                }
+              }
+              return next;
+            });
+          }
+        })
+        .catch(() => {}); // AI classification is best-effort
+    }
 
     // Auto-process Zillow listings immediately (no manual button needed)
     const listingsToProcess = remaining.filter((e) => {
@@ -902,7 +943,8 @@ export default function GmailCleaner() {
                 {reviewEmails.map((e) => (
                   <EmailRow key={e.id} email={e} action={actions.get(e.id) || "trash"}
                     onCycle={() => cycleAction(e.id)} trashCount={trashCountMap[e.id] || 0}
-                    showAccount={showAccountBadge} />
+                    showAccount={showAccountBadge}
+                    aiCategory={aiClassifications[extractEmail(e.sender)]?.category} />
                 ))}
               </div>
             )}

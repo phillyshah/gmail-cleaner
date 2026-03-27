@@ -31,6 +31,7 @@ export async function searchGmail(accessToken, query, maxResults = 50) {
         id: d.id,
         subject: h.find((x) => x.name === "Subject")?.value || "(no subject)",
         sender: h.find((x) => x.name === "From")?.value || "(unknown)",
+        snippet: d.snippet || "",
       });
     }
   }
