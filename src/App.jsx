@@ -481,10 +481,10 @@ export default function GmailCleaner() {
       }
     }
     if (unknownSenders.length) {
-      fetch("/api/classify", {
+      fetch("/api/claude", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accountId: toScan[0]?.email || "default", senders: unknownSenders }),
+        body: JSON.stringify({ action: "classify", accountId: toScan[0]?.email || "default", senders: unknownSenders }),
       })
         .then((r) => r.json())
         .then((data) => {
