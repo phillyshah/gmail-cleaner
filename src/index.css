@@ -55,6 +55,13 @@ body { margin: 0; }
 .iz-pill-social   { background: rgba(10,132,255,0.2);  color: #409cff; }
 .iz-pill-listing  { background: rgba(52,211,100,0.2);  color: #34d364; }
 .iz-pill-inbox    { background: rgba(255,255,255,0.1); color: #c0bdd0; }
+.iz-pill-newsletter    { background: rgba(175,82,222,0.2);  color: #bf5af2; }
+.iz-pill-transactional { background: rgba(100,210,255,0.2); color: #64d2ff; }
+.iz-pill-human         { background: rgba(52,211,100,0.2);  color: #34d364; }
+.iz-pill-vendor        { background: rgba(255,214,10,0.2);  color: #ffd60a; }
+.iz-pill-marketing     { background: rgba(255,69,58,0.2);   color: #ff453a; }
+.iz-pill-notification  { background: rgba(10,132,255,0.2);  color: #409cff; }
+.iz-pill-other         { background: rgba(255,255,255,0.1); color: #c0bdd0; }
 .iz-pill-account  { font-size: 10px; font-weight: 500; padding: 3px 8px; border-radius: 20px; background: rgba(255,255,255,0.08); color: #a0a0b8; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .iz-section-hdr {
