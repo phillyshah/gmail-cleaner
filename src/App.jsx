@@ -403,11 +403,8 @@ export default function GmailCleaner() {
         });
         const result = await res.json();
         if (result.error) { addLog(`Error: ${result.error}`); return []; }
-        addLog(`${account.email}: ${result.promotions.length} promos, ${result.social.length} social.`);
-        return [
-          ...(result.promotions || []).map((e) => ({ ...e, category: "promo", account: account.email, source: "gmail" })),
-          ...(result.social || []).map((e) => ({ ...e, category: "social", account: account.email, source: "gmail" })),
-        ];
+        addLog(`${account.email}: ${(result.emails || []).length} unread emails.`);
+        return (result.emails || []).map((e) => ({ ...e, category: e.category || "inbox", account: account.email, source: "gmail" }));
       } catch (err) {
         addLog(`Error (${account.email}): ${err.message}`);
         return [];

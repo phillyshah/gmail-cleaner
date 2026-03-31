@@ -7,11 +7,8 @@ export default async function handler(req, res) {
   if (!accessToken) return res.status(400).json({ error: "No access token" });
 
   try {
-    const [promotions, social] = await Promise.all([
-      searchGmail(accessToken, "category:promotions newer_than:30d"),
-      searchGmail(accessToken, "category:social newer_than:30d"),
-    ]);
-    res.json({ promotions, social });
+    const emails = await searchGmail(accessToken, "is:unread newer_than:7d");
+    res.json({ emails });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

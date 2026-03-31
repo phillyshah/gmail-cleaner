@@ -21,8 +21,8 @@ function isListing(email) {
 async function scanImap() {
   return withImap(async (client) => {
     const since = new Date();
-    since.setDate(since.getDate() - 1);
-    const uids = await client.search({ since }, { uid: true });
+    since.setDate(since.getDate() - 7);
+    const uids = await client.search({ since, unseen: true }, { uid: true });
     if (!uids.length) return [];
 
     const emails = [];
@@ -176,23 +176,13 @@ export default async function handler(req, res) {
       accounts.map(async (account) => {
         const token = await getAccessToken(account.refreshToken);
         if (!token) return { account, token: null, emails: [] };
-        const [promos, social, allListings] = await Promise.all([
-          searchGmail(token, "category:promotions newer_than:1d"),
-          searchGmail(token, "category:social newer_than:1d"),
-          // Search ALL categories for listing emails in the past 24hrs
-          searchGmail(token, "in:anywhere (from:newwestern.com OR (from:zillow subject:(\"new listing\" OR \"price cut\"))) newer_than:1d"),
-        ]);
-        // Deduplicate: listings first so they aren't misclassified
-        const seen = new Set();
-        const all = [];
-        for (const e of [
-          ...allListings.map((e) => ({ ...e, category: "listing" })),
-          ...promos.map((e) => ({ ...e, category: "promo" })),
-          ...social.map((e) => ({ ...e, category: "social" })),
-        ]) {
-          if (!seen.has(e.id)) { seen.add(e.id); all.push(e); }
-        }
-        return { account, token, emails: all };
+        const emails = await searchGmail(token, "is:unread newer_than:7d");
+        // Tag listings based on sender/subject
+        const tagged = emails.map((e) => {
+          if (isListing(e)) return { ...e, category: "listing" };
+          return { ...e, category: "inbox" };
+        });
+        return { account, token, emails: tagged };
       })
     );
 
@@ -205,9 +195,11 @@ export default async function handler(req, res) {
       const listings = emails.filter(isListing);
       const rest = emails.filter((e) => !isListing(e));
 
-      // Label non-listing promo/social emails as "telegram" for review
+      // Mark read and trash non-listing emails
       if (rest.length) {
-        await labelGmailEmails(token, rest.map((e) => e.id));
+        await Promise.all(
+          rest.map((e) => Promise.all([markAsRead(token, e.id), trashMessage(token, e.id)]))
+        );
         totalLabeled += rest.length;
       }
 
@@ -231,12 +223,12 @@ export default async function handler(req, res) {
     const imapTrauma = imapEmails.filter((e) => e.category === "trauma");
     const imapSpam = imapEmails.filter((e) => e.category === "inbox");
 
-    // Spam regular IMAP inbox emails
+    // Trash regular IMAP inbox emails (mark read + trash, not spam)
     if (imapSpam.length) {
-      await spamImapEmails(imapSpam.map((e) => e.id));
+      await trashImapEmails(imapSpam.map((e) => e.id));
     }
 
-    // Trash IMAP listings
+    // Trash IMAP listings (mark read + trash)
     if (imapListings.length) {
       await trashImapEmails(imapListings.map((e) => e.id));
       totalListingsTrashed += imapListings.length;
