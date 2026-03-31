@@ -1,4 +1,4 @@
-import { trashMessage } from "./_lib/gmail.js";
+import { trashMessage, markAsRead } from "./_lib/gmail.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
@@ -9,7 +9,7 @@ export default async function handler(req, res) {
   let deleted = 0, errors = 0;
   await Promise.all(
     ids.map(async (id) => {
-      const r = await trashMessage(accessToken, id);
+      const [r] = await Promise.all([trashMessage(accessToken, id), markAsRead(accessToken, id)]);
       if (r.ok) deleted++;
       else errors++;
     })
