@@ -704,9 +704,10 @@ export default function GmailCleaner() {
     setTraumaPhase("processing");
     addLog(`Processing ${traumaEmails.length} trauma dashboard email${traumaEmails.length > 1 ? "s" : ""}…`);
 
-    const imapTrauma = traumaEmails.filter((e) => e.source === "imap");
     const allResults = [];
 
+    // Process IMAP trauma emails
+    const imapTrauma = traumaEmails.filter((e) => e.source === "imap");
     if (imapTrauma.length > 0) {
       try {
         const res = await fetch("/api/process-trauma", {
@@ -717,7 +718,32 @@ export default function GmailCleaner() {
         const data = await res.json();
         allResults.push(...(data.results || []));
       } catch (err) {
-        addLog(`Trauma processing error: ${err.message}`);
+        addLog(`Trauma processing error (IMAP): ${err.message}`);
+      }
+    }
+
+    // Process Gmail trauma emails (grouped by account for token)
+    const gmailTrauma = traumaEmails.filter((e) => e.source !== "imap");
+    const byAccount = {};
+    gmailTrauma.forEach((e) => {
+      if (!byAccount[e.account]) byAccount[e.account] = [];
+      byAccount[e.account].push(e);
+    });
+    for (const [accountEmail, emailBatch] of Object.entries(byAccount)) {
+      const account = accounts.find((a) => a.email === accountEmail);
+      if (!account) continue;
+      const token = await getValidToken(account);
+      if (!token) { addLog(`Skipped trauma for ${accountEmail} — no token`); continue; }
+      try {
+        const res = await fetch("/api/process-trauma", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ emails: emailBatch, accessToken: token }),
+        });
+        const data = await res.json();
+        allResults.push(...(data.results || []));
+      } catch (err) {
+        addLog(`Trauma processing error (${accountEmail}): ${err.message}`);
       }
     }
 
