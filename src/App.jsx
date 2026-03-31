@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { version as APP_VERSION } from "../package.json";
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const SCOPES = "https://www.googleapis.com/auth/gmail.modify";
@@ -995,7 +996,7 @@ export default function GmailCleaner() {
           </div>
         )}
 
-        <div style={{ marginTop: 40, fontSize: 13, color: "#55556a", textAlign: "center" }}>v2.0</div>
+        <div style={{ marginTop: 40, fontSize: 13, color: "#55556a", textAlign: "center" }}>v{APP_VERSION}</div>
       </div>
 
       {/* Sticky bottom bar */}
