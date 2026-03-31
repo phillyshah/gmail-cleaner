@@ -442,7 +442,14 @@ export default function GmailCleaner() {
 
     for (const e of all) {
       const addr = extractEmail(e.sender);
-      if (spamSet.has(addr) || trashCounts[addr] >= AUTO_SPAM_THRESHOLD) {
+      const subjectLower = e.subject?.toLowerCase() || "";
+      const isListing =
+        (addr.includes("zillow") && (subjectLower.includes("new listing") || subjectLower.includes("price cut"))) ||
+        addr.includes("newwestern.com");
+      const isTrauma = subjectLower.includes("trauma dashboard") || e.category === "trauma";
+
+      // Never auto-spam listings or trauma — they must be processed first
+      if (!isListing && !isTrauma && (spamSet.has(addr) || trashCounts[addr] >= AUTO_SPAM_THRESHOLD)) {
         autoSpam.push(e);
       } else {
         remaining.push(e);
@@ -469,12 +476,17 @@ export default function GmailCleaner() {
     setActions(initActions);
     setPhase("review");
 
-    // Background: classify unknown senders via AI
+    // Background: classify unknown senders via AI (skip listing/trauma senders)
     const unknownSenders = [];
     const seenAddrs = new Set();
     for (const e of remaining) {
       const addr = extractEmail(e.sender);
-      if (!safeSet.has(addr) && !spamSet.has(addr) && !seenAddrs.has(addr)) {
+      const sl = e.subject?.toLowerCase() || "";
+      const isListingOrTrauma =
+        (addr.includes("zillow") && (sl.includes("new listing") || sl.includes("price cut"))) ||
+        addr.includes("newwestern.com") ||
+        sl.includes("trauma dashboard") || e.category === "trauma";
+      if (!safeSet.has(addr) && !spamSet.has(addr) && !seenAddrs.has(addr) && !isListingOrTrauma) {
         seenAddrs.add(addr);
         const name = e.sender.replace(/<[^>]+>/, "").replace(/"/g, "").trim();
         unknownSenders.push({ email: addr, name, subject: e.subject, snippet: e.snippet || "" });
