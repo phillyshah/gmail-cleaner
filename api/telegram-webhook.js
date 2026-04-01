@@ -1,7 +1,6 @@
 import { Redis } from "@upstash/redis";
-import * as XLSX from "xlsx";
 import { withImap } from "./_lib/imap.js";
-import { sendTelegram } from "./_lib/telegram.js";
+import { sendTelegram, sendTelegramDocument } from "./_lib/telegram.js";
 import { getAccessToken, searchGmail, trashMessage, markAsRead, getFullMessage, modifyMessage, getOrCreateLabel } from "./_lib/gmail.js";
 import { extractBody, extractListing, evaluateListing, formatListingTelegram } from "./_lib/listings.js";
 
@@ -68,19 +67,22 @@ function findExcelPart(struct) {
   if (!struct) return null;
   const mime = `${struct.type || ""}/${struct.subtype || ""}`.toLowerCase();
   const name = (struct.parameters?.name || struct.disposition?.parameters?.filename || "").toLowerCase();
-  if (struct.part && (mime.includes("sheet") || mime.includes("excel") || (mime === "application/octet-stream" && name.match(/\.xlsx?$/)))) return struct.part;
+  if (struct.part && (mime.includes("sheet") || mime.includes("excel") || (mime === "application/octet-stream" && name.match(/\.xlsx?$/)))) {
+    return { part: struct.part, filename: struct.parameters?.name || struct.disposition?.parameters?.filename || "trauma-dashboard.xlsx" };
+  }
   if (struct.childNodes) { for (const c of struct.childNodes) { const f = findExcelPart(c); if (f) return f; } }
   return null;
 }
 
 async function processTraumaEmail(email) {
   await withImap(async (client) => {
-    let buffer = null, emailDate = email.date ? new Date(email.date) : new Date();
+    let buffer = null, filename = "trauma-dashboard.xlsx", emailDate = email.date ? new Date(email.date) : new Date();
     for await (const msg of client.fetch([email.id], { envelope: true, bodyStructure: true }, { uid: true })) {
       emailDate = msg.envelope.date || emailDate;
-      const part = findExcelPart(msg.bodyStructure);
-      if (part) {
-        const dl = await client.download(email.id, part, { uid: true });
+      const result = findExcelPart(msg.bodyStructure);
+      if (result) {
+        filename = result.filename;
+        const dl = await client.download(email.id, result.part, { uid: true });
         const chunks = []; for await (const chunk of dl.content) chunks.push(chunk);
         buffer = Buffer.concat(chunks);
       }
@@ -89,34 +91,8 @@ async function processTraumaEmail(email) {
 
     if (!buffer) { await sendTelegram("⚠️ No Excel attachment found in trauma dashboard email"); return; }
 
-    const workbook = XLSX.read(buffer, { type: "buffer" });
-    const ws = workbook.Sheets["Trauma Dashboard"] || workbook.Sheets[workbook.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-    const currentMonth = new Date(emailDate).getMonth() + 1;
-    let colHeaderRow = -1, grandTotalRow = -1, sectionStart = -1;
-    for (let i = 0; i < rows.length; i++) {
-      const cell = String(rows[i][0] || "").trim();
-      if (cell.toLowerCase().includes("revenue by product type")) sectionStart = i;
-      if (sectionStart !== -1) {
-        if (cell.toLowerCase() === "product type" && rows[i].some((c) => String(c) === "Grand Total")) colHeaderRow = i;
-        if (colHeaderRow !== -1 && cell === "Grand Total") { grandTotalRow = i; break; }
-        if (i > sectionStart + 2 && /revenue by (surgeon|manager|distributor)/i.test(cell)) break;
-      }
-    }
     const dateStr = new Date(emailDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
-    if (colHeaderRow === -1 || grandTotalRow === -1) {
-      await sendTelegram("⚠️ Could not find Revenue by Product Type table in trauma dashboard");
-    } else {
-      const headers = rows[colHeaderRow];
-      const monthColIdx = headers.findIndex((c, idx) => idx > 0 && Number(c) === currentMonth);
-      if (monthColIdx === -1) {
-        await sendTelegram(`⚠️ Month ${currentMonth} column not found in trauma dashboard`);
-      } else {
-        const amount = Number(rows[grandTotalRow][monthColIdx]) || 0;
-        const formatted = "$" + amount.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-        await sendTelegram(`📊 MH Trauma sales as of ${dateStr} are ${formatted}`);
-      }
-    }
+    await sendTelegramDocument(buffer, filename, `Trauma Dashboard — ${dateStr}`);
   });
 }
 
