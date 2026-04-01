@@ -10,3 +10,14 @@ export async function sendTelegram(text, opts = {}) {
     }),
   });
 }
+
+export async function sendTelegramDocument(buffer, filename, caption) {
+  const form = new FormData();
+  form.append("chat_id", process.env.TELEGRAM_CHAT_ID);
+  form.append("document", new Blob([buffer]), filename);
+  if (caption) form.append("caption", caption);
+  await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendDocument`, {
+    method: "POST",
+    body: form,
+  });
+}

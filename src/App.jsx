@@ -325,6 +325,14 @@ export default function GmailCleaner() {
     setLogs((p) => [...p, { text: msg, time: new Date().toLocaleTimeString() }]);
   }, []);
 
+  const notifyTelegram = useCallback((text) => {
+    fetch("/api/claude", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "notify", text }),
+    }).catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [logs]);
@@ -387,6 +395,7 @@ export default function GmailCleaner() {
     setLogs([]);
     setAutoSpamCount(0);
     setAiClassifications({});
+    notifyTelegram("Inbox Zero: Starting scan...");
 
     const toScan = accounts.filter((a) => selectedAccounts.includes(a.email));
     const scanImapEnabled = selectedAccounts.includes(IMAP_ACCOUNT);
@@ -474,6 +483,10 @@ export default function GmailCleaner() {
     setActions(initActions);
     setPhase("review");
 
+    const scanParts = [`${remaining.length} emails to review`];
+    if (spammed) scanParts.push(`${spammed} auto-spammed`);
+    notifyTelegram(`Inbox Zero: Scan complete — ${scanParts.join(", ")}`);
+
     // Background: classify unknown senders via AI (skip listing/trauma senders)
     const unknownSenders = [];
     const seenAddrs = new Set();
@@ -554,7 +567,8 @@ export default function GmailCleaner() {
 
       const notified = allResults.filter((r) => r.action === "notified").length;
       const trashed = allResults.filter((r) => r.action === "trashed").length;
-      addLog(`Listings done: ${notified} matched (Telegram sent), ${trashed} trashed.`);
+      addLog(`Listings done: ${notified} matched, ${trashed} trashed.`);
+      notifyTelegram(`Inbox Zero: Listings — ${notified} matched, ${trashed} trashed`);
       setListingResults(allResults);
       setListingPhase("done");
       const processedIds = new Set(allResults.map((r) => r.id));
@@ -657,6 +671,7 @@ export default function GmailCleaner() {
     if (totalSpammed) parts.push(`${totalSpammed} spammed`);
     if (toKeep.length) parts.push(`${toKeep.length} kept`);
     addLog(`Done. ${parts.join(", ")}.`);
+    notifyTelegram(`Inbox Zero: Cleanup done — ${parts.join(", ")}`);
     setPhase("done");
   };
 
@@ -749,7 +764,8 @@ export default function GmailCleaner() {
 
     const notified = allResults.filter((r) => r.action === "notified").length;
     const errors = allResults.filter((r) => r.action === "error").length;
-    addLog(`Trauma done: ${notified} sent to Telegram${errors ? `, ${errors} errors` : ""}.`);
+    addLog(`Trauma done: ${notified} forwarded to Telegram${errors ? `, ${errors} errors` : ""}.`);
+    notifyTelegram(`Inbox Zero: Trauma — ${notified} dashboard${notified !== 1 ? "s" : ""} forwarded${errors ? `, ${errors} errors` : ""}`);
     setTraumaResults(allResults);
     setTraumaPhase("done");
     const processedIds = new Set(allResults.map((r) => r.id));

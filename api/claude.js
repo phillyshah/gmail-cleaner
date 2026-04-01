@@ -1,4 +1,5 @@
 import { Redis } from "@upstash/redis";
+import { sendTelegram } from "./_lib/telegram.js";
 
 const redis = new Redis({
   url: process.env.KV_REST_API_URL,
@@ -119,6 +120,12 @@ export default async function handler(req, res) {
   try {
     if (req.body.action === "classify") {
       return handleClassify(req, res);
+    }
+    if (req.body.action === "notify") {
+      const { text } = req.body;
+      if (!text) return res.status(400).json({ error: "text required" });
+      await sendTelegram(text, { parseMode: null });
+      return res.json({ ok: true });
     }
     return handleProxy(req, res);
   } catch (err) {
