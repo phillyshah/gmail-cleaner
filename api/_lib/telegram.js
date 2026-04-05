@@ -16,8 +16,12 @@ export async function sendTelegramDocument(buffer, filename, caption) {
   form.append("chat_id", process.env.TELEGRAM_CHAT_ID);
   form.append("document", new Blob([buffer]), filename);
   if (caption) form.append("caption", caption);
-  await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendDocument`, {
+  const resp = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendDocument`, {
     method: "POST",
     body: form,
   });
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "unknown");
+    throw new Error(`sendTelegramDocument failed (${resp.status}): ${body}`);
+  }
 }

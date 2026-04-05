@@ -136,8 +136,6 @@ export default async function handler(req, res) {
   const cmd = message.text.trim().split(" ")[0].toLowerCase();
   if (cmd !== "/clean") return;
 
-  await sendTelegram("🧹 Starting cleanup...");
-
   const accounts = (await redis.get("gmail_accounts")) || [];
   if (!accounts.length) {
     await sendTelegram("❌ No Gmail accounts found. Open the app and connect your accounts first.");
@@ -145,6 +143,7 @@ export default async function handler(req, res) {
   }
 
   let totalLabeled = 0, totalNotified = 0, totalListingsTrashed = 0, totalTrauma = 0;
+  const warnings = [];
 
   try {
     // Scan all Gmail accounts in parallel
@@ -164,7 +163,7 @@ export default async function handler(req, res) {
 
     for (const { account, token, emails } of accountResults) {
       if (!token) {
-        await sendTelegram(`⚠️ Could not refresh token for ${account.email} — skipping.`);
+        warnings.push(`⚠️ Could not refresh token for ${account.email} — skipped`);
         continue;
       }
 
@@ -193,11 +192,20 @@ export default async function handler(req, res) {
     }
 
     // Scan IMAP account (Hostinger)
-    await sendTelegram(`📬 Scanning ${process.env.HOSTINGER_EMAIL}...`);
     const imapEmails = await scanImap();
     const imapListings = imapEmails.filter((e) => e.category === "listing");
     const imapTrauma = imapEmails.filter((e) => e.category === "trauma");
     const imapSpam = imapEmails.filter((e) => e.category === "inbox");
+
+    // Process trauma dashboard emails FIRST (before trashing modifies IMAP state)
+    for (const email of imapTrauma) {
+      try {
+        await processTraumaEmail(email);
+        totalTrauma++;
+      } catch (err) {
+        warnings.push(`⚠️ Trauma error: ${err.message}`);
+      }
+    }
 
     // Trash regular IMAP inbox emails (mark read + trash, not spam)
     if (imapSpam.length) {
@@ -209,25 +217,20 @@ export default async function handler(req, res) {
       await trashImapEmails(imapListings.map((e) => e.id));
       totalListingsTrashed += imapListings.length;
     }
-
-    // Process trauma dashboard emails
-    for (const email of imapTrauma) {
-      try {
-        await processTraumaEmail(email);
-        totalTrauma++;
-      } catch (err) {
-        await sendTelegram(`⚠️ Trauma error: ${err.message}`);
-      }
-    }
   } catch (err) {
     await sendTelegram(`❌ Error during cleanup: ${err.message}`);
   }
 
-  await sendTelegram(
+  let summary =
     `✅ *Cleanup complete!*\n\n` +
     `🏷 ${totalLabeled} emails tagged for review\n` +
     `🏠 ${totalNotified} listings matched & sent\n` +
     `🗑 ${totalListingsTrashed} listings trashed\n` +
-    `📊 ${totalTrauma} trauma dashboard${totalTrauma !== 1 ? "s" : ""} processed`
-  );
+    `📊 ${totalTrauma} trauma dashboard${totalTrauma !== 1 ? "s" : ""} processed`;
+
+  if (warnings.length) {
+    summary += `\n\n${warnings.join("\n")}`;
+  }
+
+  await sendTelegram(summary);
 }
