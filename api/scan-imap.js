@@ -20,7 +20,8 @@ export default async function handler(req, res) {
         const senderLower = sender.toLowerCase();
         const isListing =
           (senderLower.includes("zillow") && (subjectLower.includes("new listing") || subjectLower.includes("price cut"))) ||
-          senderLower.includes("newwestern.com");
+          senderLower.includes("newwestern.com") ||
+          senderLower.includes("carly stone");
         const isTrauma = subjectLower.includes("trauma dashboard");
 
         results.push({
