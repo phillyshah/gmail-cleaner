@@ -358,9 +358,11 @@ export default function GmailCleaner() {
       const addr = extractEmail(e.sender);
       countMap[e.id] = trashCounts[addr] || 0;
       const subjectLower = e.subject?.toLowerCase() || "";
+      const senderLower = e.sender?.toLowerCase() || "";
       const isListing =
         (addr.includes("zillow") && (subjectLower.includes("new listing") || subjectLower.includes("price cut"))) ||
-        addr.includes("newwestern.com");
+        addr.includes("newwestern.com") ||
+        senderLower.includes("carly stone");
       const isTrauma = subjectLower.includes("trauma dashboard") || e.category === "trauma";
       if (isTrauma) trauma.push(e);
       else if (isListing) listings.push(e);
@@ -450,9 +452,11 @@ export default function GmailCleaner() {
     for (const e of all) {
       const addr = extractEmail(e.sender);
       const subjectLower = e.subject?.toLowerCase() || "";
+      const senderLower = e.sender?.toLowerCase() || "";
       const isListing =
         (addr.includes("zillow") && (subjectLower.includes("new listing") || subjectLower.includes("price cut"))) ||
-        addr.includes("newwestern.com");
+        addr.includes("newwestern.com") ||
+        senderLower.includes("carly stone");
       const isTrauma = subjectLower.includes("trauma dashboard") || e.category === "trauma";
 
       // Never auto-spam listings or trauma — they must be processed first
@@ -493,9 +497,11 @@ export default function GmailCleaner() {
     for (const e of remaining) {
       const addr = extractEmail(e.sender);
       const sl = e.subject?.toLowerCase() || "";
+      const senderLower = e.sender?.toLowerCase() || "";
       const isListingOrTrauma =
         (addr.includes("zillow") && (sl.includes("new listing") || sl.includes("price cut"))) ||
         addr.includes("newwestern.com") ||
+        senderLower.includes("carly stone") ||
         sl.includes("trauma dashboard") || e.category === "trauma";
       if (!safeSet.has(addr) && !spamSet.has(addr) && !seenAddrs.has(addr) && !isListingOrTrauma) {
         seenAddrs.add(addr);
@@ -534,7 +540,8 @@ export default function GmailCleaner() {
     const listingsToProcess = remaining.filter((e) => {
       const addr = extractEmail(e.sender);
       const subjectLower = e.subject?.toLowerCase() || "";
-      return (addr.includes("zillow") && (subjectLower.includes("new listing") || subjectLower.includes("price cut"))) || addr.includes("newwestern.com");
+      const senderLower = e.sender?.toLowerCase() || "";
+      return (addr.includes("zillow") && (subjectLower.includes("new listing") || subjectLower.includes("price cut"))) || addr.includes("newwestern.com") || senderLower.includes("carly stone");
     });
     if (listingsToProcess.length) {
       setListingPhase("processing");
