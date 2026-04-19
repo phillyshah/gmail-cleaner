@@ -52,6 +52,10 @@ async function fetchImapAttachment(client, uid) {
     }
   }
   await client.messageFlagsAdd([String(uid)], ["\\Seen"], { uid: true });
+  const mailboxes = await client.list();
+  const trashFolder = mailboxes.find((m) => m.specialUse === "\\Trash" || /trash|deleted/i.test(m.name));
+  if (trashFolder) await client.messageMove([String(uid)], trashFolder.path, { uid: true });
+  else await client.messageFlagsAdd([String(uid)], ["\\Deleted"], { uid: true });
   return { buffer, filename, emailDate };
 }
 
