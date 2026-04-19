@@ -397,7 +397,6 @@ export default function GmailCleaner() {
     setLogs([]);
     setAutoSpamCount(0);
     setAiClassifications({});
-    notifyTelegram("Inbox Zero: Starting scan...");
 
     const toScan = accounts.filter((a) => selectedAccounts.includes(a.email));
     const scanImapEnabled = selectedAccounts.includes(IMAP_ACCOUNT);
@@ -489,7 +488,6 @@ export default function GmailCleaner() {
 
     const scanParts = [`${remaining.length} emails to review`];
     if (spammed) scanParts.push(`${spammed} auto-spammed`);
-    notifyTelegram(`Inbox Zero: Scan complete — ${scanParts.join(", ")}`);
 
     // Background: classify unknown senders via AI (skip listing/trauma senders)
     const unknownSenders = [];
@@ -575,7 +573,6 @@ export default function GmailCleaner() {
       const notified = allResults.filter((r) => r.action === "notified").length;
       const trashed = allResults.filter((r) => r.action === "trashed").length;
       addLog(`Listings done: ${notified} matched, ${trashed} trashed.`);
-      notifyTelegram(`Inbox Zero: Listings — ${notified} matched, ${trashed} trashed`);
       setListingResults(allResults);
       setListingPhase("done");
       const processedIds = new Set(allResults.map((r) => r.id));
@@ -674,11 +671,16 @@ export default function GmailCleaner() {
     setCleanResult({ trashed: totalTrashed, spammed: totalSpammed, kept: toKeep.length });
 
     const parts = [];
+    if (autoSpamCount) parts.push(`${autoSpamCount} auto-spammed`);
+    const listingsMatched = listingResults.filter((r) => r.action === "notified").length;
+    const listingsTrashed = listingResults.filter((r) => r.action === "trashed").length;
+    if (listingsMatched) parts.push(`${listingsMatched} listings matched`);
+    if (listingsTrashed) parts.push(`${listingsTrashed} listings trashed`);
     if (totalTrashed) parts.push(`${totalTrashed} trashed`);
     if (totalSpammed) parts.push(`${totalSpammed} spammed`);
     if (toKeep.length) parts.push(`${toKeep.length} kept`);
     addLog(`Done. ${parts.join(", ")}.`);
-    notifyTelegram(`Inbox Zero: Cleanup done — ${parts.join(", ")}`);
+    notifyTelegram(`Inbox Zero: ${parts.join(", ")}`);
     setPhase("done");
   };
 
@@ -741,6 +743,7 @@ export default function GmailCleaner() {
         allResults.push(...(data.results || []));
       } catch (err) {
         addLog(`Trauma processing error (IMAP): ${err.message}`);
+        imapTrauma.forEach((e) => allResults.push({ id: e.id, action: "error", error: err.message }));
       }
     }
 
@@ -766,6 +769,7 @@ export default function GmailCleaner() {
         allResults.push(...(data.results || []));
       } catch (err) {
         addLog(`Trauma processing error (${accountEmail}): ${err.message}`);
+        emailBatch.forEach((e) => allResults.push({ id: e.id, action: "error", error: err.message }));
       }
     }
 
