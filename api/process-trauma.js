@@ -52,10 +52,6 @@ async function fetchImapAttachment(client, uid) {
     }
   }
   await client.messageFlagsAdd([String(uid)], ["\\Seen"], { uid: true });
-  const mailboxes = await client.list();
-  const trashFolder = mailboxes.find((m) => m.specialUse === "\\Trash" || /trash|deleted/i.test(m.name));
-  if (trashFolder) await client.messageMove([String(uid)], trashFolder.path, { uid: true });
-  else await client.messageFlagsAdd([String(uid)], ["\\Deleted"], { uid: true });
   return { buffer, filename, emailDate };
 }
 
@@ -97,7 +93,9 @@ export default async function handler(req, res) {
         let buffer, filename, emailDate;
 
         if (email.source === "imap") {
-          ({ buffer, filename, emailDate } = await withImap((client) => fetchImapAttachment(client, email.id)));
+          const imapPromise = withImap((client) => fetchImapAttachment(client, email.id));
+          const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("IMAP fetch timed out after 30s")), 30000));
+          ({ buffer, filename, emailDate } = await Promise.race([imapPromise, timeout]));
         } else {
           if (!accessToken) {
             results.push({ id: email.id, action: "error", error: "No access token for Gmail trauma email" });
